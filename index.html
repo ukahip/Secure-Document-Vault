@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>FoxVault — Secure Document Vault</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Figtree:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-<!-- Firebase for MFA support -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <style>
@@ -211,6 +210,11 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
   border:1px solid rgba(16,185,129,.2);border-radius:20px;padding:3px 10px;display:inline-flex;align-items:center;gap:4px;}
 .doc-size{font-family:var(--fm);font-size:13px;color:var(--t3);text-align:right;}
 
+/* ── SECURITY FIX: loading skeleton ── */
+.docs-loading{text-align:center;padding:32px 20px;color:var(--t3);}
+.docs-loading-icon{font-size:22px;margin-bottom:10px;animation:spin 1.2s linear infinite;display:inline-block;}
+.docs-loading p{font-size:14px;font-family:var(--fm);}
+
 .empty-state{text-align:center;padding:52px 20px;color:var(--t3);}
 .empty-icon{font-size:40px;margin-bottom:14px;opacity:.3;}
 .empty-state p{font-size:15px;}
@@ -238,8 +242,6 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 .stack-name{font-family:var(--fh);font-size:15px;font-weight:700;margin-bottom:6px;color:var(--t1);}
 .stack-role{font-size:13px;color:var(--t3);margin-bottom:14px;line-height:1.65;}
 .stack-tag{font-family:var(--fm);font-size:10px;padding:3px 9px;border-radius:20px;border:1px solid;display:inline-block;}
-
-/* Modals */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:100;display:none;align-items:center;justify-content:center;padding:20px;}
 .modal-overlay.show{display:flex;}
 .modal{background:var(--ink-2);border:1px solid var(--bd2);border-radius:var(--r-xl);padding:32px 36px;max-width:450px;width:100%;box-shadow:0 24px 80px rgba(0,0,0,.7);animation:modalPop .25s cubic-bezier(.34,1.56,.64,1);}
@@ -250,7 +252,6 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 .modal-btn.primary{background:linear-gradient(135deg,#059669,var(--emerald));color:#fff;}
 .modal-btn.secondary{background:var(--ink-3);color:var(--t2);border:1px solid var(--bd);}
 .recaptcha-container{margin:14px 0;}
-
 .toasts{position:fixed;top:18px;right:18px;z-index:999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
 .toast{background:var(--ink-2);border:1px solid var(--bd2);border-radius:var(--r);
   padding:13px 16px;display:flex;align-items:center;gap:10px;min-width:270px;max-width:340px;
@@ -261,7 +262,7 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 .t-sub{font-size:13px;color:var(--t3);margin-top:1px;}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--ink-2);
   border-top:1px solid var(--bd);z-index:30;padding:6px 0 calc(6px + env(safe-area-inset-bottom));}
-.bnav-inner{display:flex;justify-content:space-around;align-items:center;}
+.bnav-inner{display:flex;justify-content:space-around;align-items:center);}
 .bnav-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 10px;
   border-radius:var(--r);cursor:pointer;color:var(--t3);background:none;border:none;
   font-family:var(--fb);min-width:56px;transition:color .15s;}
@@ -370,12 +371,12 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
         <input type="file" id="fi1" accept=".pdf" style="display:none"/>
         <div class="prog-wrap" id="progBar"><div class="prog-top"><span class="prog-file" id="progFile">file.pdf</span><span class="prog-pct" id="progPct">0%</span></div><div class="prog-track"><div class="prog-fill" id="progFill"></div></div></div>
         <div class="sec-hd"><div class="sec-title"><div class="sec-icon">📂</div>RECENT DOCUMENTS</div><button class="sec-link" data-page="documents">View all →</button></div>
-        <div class="docs-card"><div class="docs-head"><span></span><span>Document</span><span>Encryption</span><span>Size</span></div><div id="recentList"><div class="empty-state"><div class="empty-icon">🔒</div><p>No documents yet. Upload your first PDF.</p></div></div></div>
+        <div class="docs-card"><div class="docs-head"><span></span><span>Document</span><span>Encryption</span><span>Size</span></div><div id="recentList"><div class="docs-loading"><div class="docs-loading-icon">⏳</div><p>Loading your documents…</p></div></div></div>
       </section>
       <!-- DOCUMENTS PAGE -->
       <section class="page" id="pg-documents">
         <div class="sec-hd" style="margin-bottom:18px"><div class="sec-title"><div class="sec-icon">📂</div>ALL DOCUMENTS</div><button class="sec-link" data-page="upload">+ Upload New</button></div>
-        <div class="docs-card"><div class="docs-head"><span></span><span>Document</span><span>Encryption</span><span>Size</span></div><div id="allList"><div class="empty-state"><div class="empty-icon">🔒</div><p>Your encrypted documents will appear here.</p></div></div></div>
+        <div class="docs-card"><div class="docs-head"><span></span><span>Document</span><span>Encryption</span><span>Size</span></div><div id="allList"><div class="docs-loading"><div class="docs-loading-icon">⏳</div><p>Loading your documents…</p></div></div></div>
       </section>
       <!-- UPLOAD PAGE -->
       <section class="page" id="pg-upload">
@@ -498,46 +499,21 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 <script>
 'use strict';
 
-/* ─────────────────────────────────────────────────────────────
-   GLOBAL ERROR HANDLERS  — prevents DevTools "pause on exceptions"
-───────────────────────────────────────────────────────────── */
-window.addEventListener('error', e => {
-  console.error('[FoxVault] Global error:', e.error);
-  e.preventDefault();
-});
-window.addEventListener('unhandledrejection', e => {
-  console.error('[FoxVault] Unhandled rejection:', e.reason);
-  e.preventDefault();
-});
+window.addEventListener('error', e => { console.error('[FoxVault] Global error:', e.error); e.preventDefault(); });
+window.addEventListener('unhandledrejection', e => { console.error('[FoxVault] Unhandled rejection:', e.reason); e.preventDefault(); });
 
-/* ─────────────────────────────────────────────────────────────
-   CONFIG  — loaded from /api/config (Vercel serverless fn)
-───────────────────────────────────────────────────────────── */
+/* ─── CONFIG ─── */
 let CFG = { gatewayUrl:'', identityApiKey:'', firebaseProject:'', firebaseAuthDomain:'' };
 
 async function loadConfig(){
   try{
-    console.log('[FoxVault] Loading config from /api/config...');
     const r = await fetch('/api/config');
-    if(r.ok){
-      CFG = await r.json();
-      console.log('[FoxVault] Config loaded:', { 
-        gatewayUrl: CFG.gatewayUrl ? 'SET' : 'NOT SET', 
-        identityApiKey: CFG.identityApiKey ? 'SET' : 'NOT SET',
-        firebaseProject: CFG.firebaseProject ? 'SET' : 'NOT SET',
-        firebaseAuthDomain: CFG.firebaseAuthDomain ? 'SET' : 'NOT SET'
-      });
-    } else {
-      console.error('[FoxVault] Config load failed:', r.status, r.statusText);
-    }
-  }catch(e){ 
-    console.error('[FoxVault] Config error:', e.message); 
-  }
+    if(r.ok){ CFG = await r.json(); console.log('[FoxVault] Config loaded'); }
+    else { console.error('[FoxVault] Config load failed:', r.status); }
+  }catch(e){ console.error('[FoxVault] Config error:', e.message); }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   FIREBASE  — initialized from server config after loadConfig()
-───────────────────────────────────────────────────────────── */
+/* ─── FIREBASE ─── */
 let firebaseApp = null;
 let firebaseAuth = null;
 let mfaResolver = null;
@@ -554,14 +530,10 @@ async function initFirebase(){
     firebaseAuth = firebase.auth();
     await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
     console.log('[FoxVault] Firebase initialized');
-  } catch(e) {
-    console.error('[FoxVault] Firebase init failed:', e);
-  }
+  } catch(e) { console.error('[FoxVault] Firebase init failed:', e); }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   SESSION  — sessionStorage only (NOT localStorage)
-───────────────────────────────────────────────────────────── */
+/* ─── SESSION — sessionStorage only ─── */
 const Session = {
   set(t,e){ sessionStorage.setItem('fv_t',t); sessionStorage.setItem('fv_e',e); },
   token(){ return sessionStorage.getItem('fv_t'); },
@@ -569,98 +541,39 @@ const Session = {
   clear(){ sessionStorage.removeItem('fv_t'); sessionStorage.removeItem('fv_e'); }
 };
 
-/* ─────────────────────────────────────────────────────────────
-   RATE LIMITER  — 5 attempts per 15 minutes (client-side)
-───────────────────────────────────────────────────────────── */
+/* ─── RATE LIMITER ─── */
 const RL = {
   MAX:5, WIN:15*60*1000, KEY:'fv_rl',
   _get(){ try{ return JSON.parse(sessionStorage.getItem(this.KEY)||'null'); }catch(e){ return null; } },
-  check(){
-    const d=this._get();
-    if(!d||Date.now()-d.t>this.WIN) return {ok:true,left:this.MAX};
-    return {ok:d.n<this.MAX, left:Math.max(0,this.MAX-d.n)};
-  },
-  hit(){
-    const d=this._get();
-    if(!d||Date.now()-d.t>this.WIN){ sessionStorage.setItem(this.KEY,JSON.stringify({n:1,t:Date.now()})); return; }
-    d.n++; sessionStorage.setItem(this.KEY,JSON.stringify(d));
-  },
-  minsLeft(){
-    const d=this._get(); if(!d) return 0;
-    return Math.ceil(Math.max(0,this.WIN-(Date.now()-d.t))/60000);
-  }
+  check(){ const d=this._get(); if(!d||Date.now()-d.t>this.WIN) return {ok:true,left:this.MAX}; return {ok:d.n<this.MAX, left:Math.max(0,this.MAX-d.n)}; },
+  hit(){ const d=this._get(); if(!d||Date.now()-d.t>this.WIN){ sessionStorage.setItem(this.KEY,JSON.stringify({n:1,t:Date.now()})); return; } d.n++; sessionStorage.setItem(this.KEY,JSON.stringify(d)); },
+  minsLeft(){ const d=this._get(); if(!d) return 0; return Math.ceil(Math.max(0,this.WIN-(Date.now()-d.t))/60000); }
 };
 
-/* ─────────────────────────────────────────────────────────────
-   XSS SANITISER
-───────────────────────────────────────────────────────────── */
-function esc(s){
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
+/* ─── XSS SANITISER ─── */
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
-/* ─────────────────────────────────────────────────────────────
-   API HELPER
-───────────────────────────────────────────────────────────── */
+/* ─── API HELPER ─── */
 async function apiReq(method, path, body){
-  if(!CFG.gatewayUrl){
-    throw new Error('Gateway URL not configured - check Vercel environment variables');
-  }
-  
+  if(!CFG.gatewayUrl) throw new Error('Gateway URL not configured - check Vercel environment variables');
   const baseUrl = CFG.gatewayUrl.replace(/\/$/, '');
   const url = baseUrl + (path.startsWith('/') ? path : '/' + path);
-  
-  console.log('[FoxVault] API Request:', method, url);
-  
-  const opts = {
-    method,
-    headers: { 
-      'Authorization': 'Bearer ' + Session.token()
-    },
-    mode: 'cors',
-    credentials: 'omit'
-  };
-  
-  if(body instanceof File || body instanceof Blob){
-    opts.headers['Content-Type'] = 'application/pdf';
-    opts.body = body;
-  } else if(body instanceof FormData){
-    opts.body = body;
-    delete opts.headers['Content-Type'];
-  } else if(body){
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  
+  const opts = { method, headers: { 'Authorization': 'Bearer ' + Session.token() }, mode: 'cors', credentials: 'omit' };
+  if(body instanceof File || body instanceof Blob){ opts.headers['Content-Type'] = 'application/pdf'; opts.body = body; }
+  else if(body instanceof FormData){ opts.body = body; delete opts.headers['Content-Type']; }
+  else if(body){ opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   try {
     const res = await fetch(url, opts);
-    
-    if(!res.ok){
-      let msg = res.statusText;
-      let errorData = null;
-      try{ 
-        errorData = await res.json(); 
-        msg = errorData.error || errorData.message || msg; 
-      }catch(_){}
-      
-      console.error('[FoxVault] API Error:', res.status, msg, errorData);
-      throw new Error(msg);
-    }
-    
+    if(!res.ok){ let msg = res.statusText; try{ const e = await res.json(); msg = e.error || e.message || msg; }catch(_){} throw new Error(msg); }
     if(res.status === 204) return {};
     return res.json();
-    
   } catch(e) {
-    if(e.message.includes('Failed to fetch') || e.name === 'TypeError'){
-      console.error('[FoxVault] CORS/Network error - ensure API Gateway has allowCors: true and backend returns Access-Control-Allow-Origin');
-      throw new Error('CORS error - cannot connect to API Gateway. Check console for details.');
-    }
+    if(e.message.includes('Failed to fetch') || e.name === 'TypeError') throw new Error('CORS error - cannot connect to API Gateway.');
     throw e;
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   AUTH ERROR MESSAGES  — now includes Firebase codes
-───────────────────────────────────────────────────────────── */
+/* ─── AUTH ERROR MESSAGES ─── */
 function authErr(code){
   const map = {
     'auth/user-not-found':'No account found with that email.',
@@ -674,59 +587,29 @@ function authErr(code){
     'auth/invalid-credential':'Incorrect email or password.',
     'auth/multi-factor-auth-required':'Multi-factor authentication required.',
     'auth/requires-recent-login':'Please sign out and sign in again to perform this action.',
-    'EMAIL_NOT_FOUND':'No account found with that email.',
-    'INVALID_PASSWORD':'Incorrect password.',
-    'INVALID_EMAIL':'Enter a valid email address.',
-    'USER_DISABLED':'This account has been disabled.',
-    'EMAIL_EXISTS':'An account with this email already exists.',
-    'WEAK_PASSWORD':'Use at least 8 characters.',
-    'TOO_MANY_ATTEMPTS_TRY_LATER':'Too many attempts. Try again later.',
-    'INVALID_LOGIN_CREDENTIALS':'Incorrect email or password.'
   };
   return map[code] || 'Something went wrong. Please try again.';
 }
 
-/* ─────────────────────────────────────────────────────────────
-   LOGIN UI HELPERS
-───────────────────────────────────────────────────────────── */
-function showErr(id,msg){ 
-  const e=document.getElementById(id); 
-  e.textContent=msg; 
-  e.classList.add('show'); 
-}
-
+/* ─── LOGIN UI HELPERS ─── */
+function showErr(id,msg){ const e=document.getElementById(id); e.textContent=msg; e.classList.add('show'); }
 function hideAlerts(){
-  ['si-err','su-err','su-ok','fp-err','fp-ok','mfa-err'].forEach(id=>{ 
-    const e=document.getElementById(id); 
-    if(e){ e.classList.remove('show'); e.textContent=''; }
-  });
+  ['si-err','su-err','su-ok','fp-err','fp-ok','mfa-err'].forEach(id=>{ const e=document.getElementById(id); if(e){ e.classList.remove('show'); e.textContent=''; } });
   document.querySelectorAll('.field-input').forEach(i=>i.classList.remove('err'));
   document.getElementById('si-rate').classList.remove('show');
 }
-
 function setLoading(p,on){
   document.getElementById(p+'-btn').disabled=on;
   document.getElementById(p+'-spin').classList.toggle('show',on);
   document.getElementById(p+'-label').textContent=on?(p==='si'?'Signing in…':'Creating account…'):(p==='si'?'Sign In':'Create Account');
 }
 
-/* ─────────────────────────────────────────────────────────────
-   TABS
-───────────────────────────────────────────────────────────── */
+/* ─── TABS ─── */
 document.getElementById('tab-signin').addEventListener('click',()=>switchTab('signin'));
 document.getElementById('tab-signup').addEventListener('click',()=>switchTab('signup'));
+function switchTab(t){ hideAlerts(); ['signin','signup'].forEach(k=>{ document.getElementById('tab-'+k).classList.toggle('active',k===t); document.getElementById('pane-'+k).classList.toggle('active',k===t); }); }
 
-function switchTab(t){
-  hideAlerts();
-  ['signin','signup'].forEach(k=>{
-    document.getElementById('tab-'+k).classList.toggle('active',k===t);
-    document.getElementById('pane-'+k).classList.toggle('active',k===t);
-  });
-}
-
-/* ─────────────────────────────────────────────────────────────
-   SIGN IN  — with MFA support
-───────────────────────────────────────────────────────────── */
+/* ─── SIGN IN ─── */
 document.getElementById('si-btn').addEventListener('click',signIn);
 document.getElementById('si-pass').addEventListener('keydown',e=>{ if(e.key==='Enter') signIn(); });
 
@@ -734,24 +617,17 @@ async function signIn(){
   hideAlerts();
   const em=document.getElementById('si-email').value.trim();
   const pw=document.getElementById('si-pass').value;
-  
   if(!em){ showErr('si-err','Please enter your email.'); document.getElementById('si-email').classList.add('err'); return; }
   if(!pw){ showErr('si-err','Please enter your password.'); document.getElementById('si-pass').classList.add('err'); return; }
   if(!CFG.identityApiKey){ showErr('si-err','Auth service unavailable — config not loaded.'); return; }
-  
   const rl=RL.check();
-  if(!rl.ok){
-    const w=document.getElementById('si-rate');
-    w.textContent=`Too many attempts. Try again in ${RL.minsLeft()} minute(s).`;
-    w.classList.add('show'); return;
-  }
-  
+  if(!rl.ok){ const w=document.getElementById('si-rate'); w.textContent=`Too many attempts. Try again in ${RL.minsLeft()} minute(s).`; w.classList.add('show'); return; }
   setLoading('si',true);
   try{
     const cred = await firebaseAuth.signInWithEmailAndPassword(em, pw);
     const token = await cred.user.getIdToken();
     Session.set(token, cred.user.email);
-    showDash(cred.user.email);
+    await showDash(cred.user.email);
   } catch(e) {
     if(e.code === 'auth/multi-factor-auth-required'){
       mfaResolver = e.resolver;
@@ -760,16 +636,12 @@ async function signIn(){
       return;
     }
     RL.hit();
-    const left=RL.check().left; 
+    const left=RL.check().left;
     showErr('si-err', authErr(e.code)+(left<=2?` (${left} attempt(s) left)`:'')); 
-  } finally { 
-    if(!mfaResolver) setLoading('si',false); 
-  }
+  } finally { if(!mfaResolver) setLoading('si',false); }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   SIGN UP  — no longer auto-logs in
-───────────────────────────────────────────────────────────── */
+/* ─── SIGN UP ─── */
 document.getElementById('su-btn').addEventListener('click',signUp);
 document.getElementById('su-pass2').addEventListener('keydown',e=>{ if(e.key==='Enter') signUp(); });
 
@@ -778,100 +650,58 @@ async function signUp(){
   const em=document.getElementById('su-email').value.trim();
   const pw=document.getElementById('su-pass').value;
   const pw2=document.getElementById('su-pass2').value;
-  
   if(!em){ showErr('su-err','Please enter your email.'); document.getElementById('su-email').classList.add('err'); return; }
   if(!pw||pw.length<8){ showErr('su-err','Password must be at least 8 characters.'); document.getElementById('su-pass').classList.add('err'); return; }
   if(pw!==pw2){ showErr('su-err','Passwords do not match.'); document.getElementById('su-pass2').classList.add('err'); return; }
   if(!CFG.identityApiKey){ showErr('su-err','Auth service unavailable — config not loaded.'); return; }
-  
   setLoading('su',true);
   try{
     await firebaseAuth.createUserWithEmailAndPassword(em, pw);
-    const ok=document.getElementById('su-ok'); 
-    ok.textContent='Account created! Please sign in with your new credentials.'; 
-    ok.classList.add('show');
+    const ok=document.getElementById('su-ok'); ok.textContent='Account created! Please sign in.'; ok.classList.add('show');
     document.getElementById('su-email').value='';
     document.getElementById('su-pass').value='';
     document.getElementById('su-pass2').value='';
-    setTimeout(()=>{
-      hideAlerts();
-      switchTab('signin');
-      document.getElementById('si-email').value=em;
-    }, 1500);
-  }catch(e){ 
-    showErr('su-err', authErr(e.code) || e.message); 
-  }
+    setTimeout(()=>{ hideAlerts(); switchTab('signin'); document.getElementById('si-email').value=em; }, 1500);
+  }catch(e){ showErr('su-err', authErr(e.code) || e.message); }
   finally{ setLoading('su',false); }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   FORGOT PASSWORD
-───────────────────────────────────────────────────────────── */
+/* ─── FORGOT PASSWORD ─── */
 document.getElementById('fp-link').addEventListener('click', e => {
   e.preventDefault();
   document.getElementById('fpModal').classList.add('show');
   document.getElementById('fp-email').value = document.getElementById('si-email').value.trim();
 });
-
-document.getElementById('fp-cancel').addEventListener('click', () => {
-  document.getElementById('fpModal').classList.remove('show');
-  hideAlerts();
-});
-
+document.getElementById('fp-cancel').addEventListener('click', () => { document.getElementById('fpModal').classList.remove('show'); hideAlerts(); });
 document.getElementById('fp-submit').addEventListener('click', async () => {
   const em = document.getElementById('fp-email').value.trim();
   if(!em){ showErr('fp-err','Please enter your email.'); return; }
   if(!firebaseAuth){ showErr('fp-err','Auth service unavailable.'); return; }
-  
   document.getElementById('fp-submit').disabled = true;
   try {
     await firebaseAuth.sendPasswordResetEmail(em);
     document.getElementById('fp-ok').textContent = 'Reset link sent! Check your inbox.';
     document.getElementById('fp-ok').classList.add('show');
-    setTimeout(() => {
-      document.getElementById('fpModal').classList.remove('show');
-      document.getElementById('fp-ok').classList.remove('show');
-      document.getElementById('fp-email').value = '';
-    }, 2000);
-  } catch(e) {
-    showErr('fp-err', authErr(e.code) || e.message);
-  } finally {
-    document.getElementById('fp-submit').disabled = false;
-  }
+    setTimeout(() => { document.getElementById('fpModal').classList.remove('show'); document.getElementById('fp-ok').classList.remove('show'); document.getElementById('fp-email').value = ''; }, 2000);
+  } catch(e) { showErr('fp-err', authErr(e.code) || e.message); }
+  finally { document.getElementById('fp-submit').disabled = false; }
 });
 
-/* ─────────────────────────────────────────────────────────────
-   MFA SIGN-IN MODAL
-───────────────────────────────────────────────────────────── */
+/* ─── MFA SIGN-IN MODAL ─── */
 async function startMfaSignIn(){
   document.getElementById('mfaModal').classList.add('show');
   document.getElementById('mfa-code').value = '';
   document.getElementById('mfa-err').classList.remove('show');
-  
   try {
     const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
-    const applicationVerifier = new firebase.auth.RecaptchaVerifier('mfa-recaptcha', {
-      size: 'invisible'
-    });
-    mfaVerificationId = await phoneAuthProvider.verifyPhoneNumber({
-      multiFactorHint: mfaResolver.hints[0],
-      session: mfaResolver.session
-    }, applicationVerifier);
-  } catch(e) {
-    showErr('mfa-err', 'Failed to send code: ' + (e.message || e.code));
-  }
+    const applicationVerifier = new firebase.auth.RecaptchaVerifier('mfa-recaptcha', { size: 'invisible' });
+    mfaVerificationId = await phoneAuthProvider.verifyPhoneNumber({ multiFactorHint: mfaResolver.hints[0], session: mfaResolver.session }, applicationVerifier);
+  } catch(e) { showErr('mfa-err', 'Failed to send code: ' + (e.message || e.code)); }
 }
-
-document.getElementById('mfa-cancel').addEventListener('click', () => {
-  document.getElementById('mfaModal').classList.remove('show');
-  mfaResolver = null;
-  setLoading('si', false);
-});
-
+document.getElementById('mfa-cancel').addEventListener('click', () => { document.getElementById('mfaModal').classList.remove('show'); mfaResolver = null; setLoading('si', false); });
 document.getElementById('mfa-verify').addEventListener('click', async () => {
   const code = document.getElementById('mfa-code').value.trim();
   if(!code || code.length !== 6){ showErr('mfa-err','Enter the 6-digit code.'); return; }
-  
   try {
     const phoneCred = firebase.auth.PhoneAuthProvider.credential(mfaVerificationId, code);
     const assertion = firebase.auth.PhoneMultiFactorGenerator.assertion(phoneCred);
@@ -880,50 +710,108 @@ document.getElementById('mfa-verify').addEventListener('click', async () => {
     Session.set(token, cred.user.email);
     document.getElementById('mfaModal').classList.remove('show');
     mfaResolver = null;
-    showDash(cred.user.email);
-  } catch(e) {
-    showErr('mfa-err', e.message || 'Invalid code. Please try again.');
-  }
+    await showDash(cred.user.email);
+  } catch(e) { showErr('mfa-err', e.message || 'Invalid code. Please try again.'); }
 });
 
-/* ─────────────────────────────────────────────────────────────
-   SCREEN TRANSITIONS
-───────────────────────────────────────────────────────────── */
+/* ─── SCREEN TRANSITIONS ─── */
 function showLogin(){
   document.getElementById('screen-login').classList.remove('hidden');
   document.getElementById('screen-dash').classList.remove('visible');
 }
 
+/* ═══════════════════════════════════════════════════════════
+   SECURITY FIX — clearAppState()
+   
+   Called BEFORE showing the dashboard for ANY user login and
+   BEFORE logout completes. Wipes all document data from both
+   memory AND the DOM so no cross-user leakage is possible.
+═══════════════════════════════════════════════════════════ */
+function clearAppState(){
+  // 1. Zero out the in-memory store
+  S.docs   = [];
+  S.events = 0;
+  S.storage = 0;
+
+  // 2. Immediately wipe the DOM — replace doc lists with loading skeletons
+  const loadingHTML = `<div class="docs-loading"><div class="docs-loading-icon">⏳</div><p>Loading your documents…</p></div>`;
+  const emptyRecent = document.getElementById('recentList');
+  const emptyAll    = document.getElementById('allList');
+  if(emptyRecent) emptyRecent.innerHTML = loadingHTML;
+  if(emptyAll)    emptyAll.innerHTML    = loadingHTML;
+
+  // 3. Reset stats counters to zero on screen
+  stats();
+
+  // 4. Reset audit log
+  const auditStream = document.getElementById('auditStream');
+  if(auditStream){
+    auditStream.innerHTML = '<div class="audit-entry"><div class="a-dot sy"></div><div><div class="a-event"><strong>SESSION STARTED</strong> — Audit log reset for new session</div><div class="a-meta">Cloud Audit Logs remain in BigQuery</div></div></div>';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SECURITY FIX — showDash()
+
+   Order of operations:
+   1. clearAppState()  ← wipes stale data BEFORE the screen shows
+   2. Show dashboard   ← user sees empty/loading state, never old data
+   3. Set user label
+   4. loadDocs()       ← fetch ONLY this user's documents
+═══════════════════════════════════════════════════════════ */
 async function showDash(email){
+  // STEP 1: wipe any previous user's data from memory and DOM first
+  clearAppState();
+
+  // STEP 2: now safe to show the dashboard — lists are empty/loading
   document.getElementById('screen-login').classList.add('hidden');
   document.getElementById('screen-dash').classList.add('visible');
-  document.getElementById('userEmail').textContent=email||Session.email();
-  addAudit('au','LOGIN — authenticated via Identity Platform');
+  document.getElementById('userEmail').textContent = email || Session.email();
+
+  addAudit('au', 'LOGIN — authenticated as ' + esc(email || Session.email()));
+
+  // STEP 3: fetch THIS user's documents from the API
   await loadDocs();
   refreshMfaStatus();
 }
 
-/* ─────────────────────────────────────────────────────────────
-   LOGOUT
-───────────────────────────────────────────────────────────── */
-document.getElementById('logoutBtn').addEventListener('click', async ()=>{
-  try { if(firebaseAuth) await firebaseAuth.signOut(); } catch(e){}
+/* ═══════════════════════════════════════════════════════════
+   SECURITY FIX — logoutBtn
+   
+   Order of operations:
+   1. clearAppState()  ← wipe data from DOM immediately on click
+   2. Session.clear()  ← kill the token
+   3. Firebase signOut ← invalidate server-side session
+   4. showLogin()      ← return to login screen
+═══════════════════════════════════════════════════════════ */
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  // STEP 1 & 2: clear data and token before async signOut
+  clearAppState();
   Session.clear();
-  S.docs=[]; S.events=0; S.storage=0;
-  ['si-email','si-pass','su-email','su-pass','su-pass2'].forEach(id=>document.getElementById(id).value='');
-  hideAlerts(); switchTab('signin'); showLogin();
+
+  // STEP 3: sign out from Firebase (async, non-blocking for UX)
+  try { if(firebaseAuth) await firebaseAuth.signOut(); } catch(e){ console.warn('[FoxVault] Firebase signOut error:', e); }
+
+  // Clear login form fields
+  ['si-email','si-pass','su-email','su-pass','su-pass2'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  });
+
+  hideAlerts();
+  switchTab('signin');
+
+  // STEP 4: return to login
+  showLogin();
 });
 
-/* ─────────────────────────────────────────────────────────────
-   DASHBOARD STATE
-───────────────────────────────────────────────────────────── */
-const S={docs:[],events:0,storage:0};
-const PT={dashboard:'DASHBOARD',documents:'DOCUMENTS',upload:'UPLOAD',audit:'AUDIT LOG',infra:'INFRASTRUCTURE',security:'SECURITY'};
-const PC={dashboard:'Overview',documents:'Documents',upload:'Upload New',audit:'Audit Log',infra:'Tech Stack',security:'Multi-Factor Auth'};
+/* ─── DASHBOARD STATE ─── */
+// SECURITY: initialise as empty — never pre-populate with data
+const S = { docs:[], events:0, storage:0 };
+const PT = { dashboard:'DASHBOARD',documents:'DOCUMENTS',upload:'UPLOAD',audit:'AUDIT LOG',infra:'INFRASTRUCTURE',security:'SECURITY' };
+const PC = { dashboard:'Overview',documents:'Documents',upload:'Upload New',audit:'Audit Log',infra:'Tech Stack',security:'Multi-Factor Auth' };
 
-/* ─────────────────────────────────────────────────────────────
-   NAVIGATION
-───────────────────────────────────────────────────────────── */
+/* ─── NAVIGATION ─── */
 function navTo(page){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('pg-'+page).classList.add('active');
@@ -932,15 +820,12 @@ function navTo(page){
   document.getElementById('breadcrumb').textContent=PC[page]||page;
   if(page === 'security') refreshMfaStatus();
 }
-
 document.querySelectorAll('[data-page]').forEach(el=>{
   el.addEventListener('click',()=>navTo(el.dataset.page));
   el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' ') navTo(el.dataset.page); });
 });
 
-/* ─────────────────────────────────────────────────────────────
-   STATS
-───────────────────────────────────────────────────────────── */
+/* ─── STATS ─── */
 function stats(){
   document.getElementById('s-total').textContent=S.docs.length;
   document.getElementById('s-enc').textContent=S.docs.length;
@@ -949,16 +834,14 @@ function stats(){
   document.getElementById('navBadge').textContent=S.docs.length;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   RENDER DOCS — XSS-safe via esc()
-───────────────────────────────────────────────────────────── */
+/* ─── RENDER DOCS — XSS-safe via esc() ─── */
 function renderDocs(){
   ['recentList','allList'].forEach((id,idx)=>{
     const el=document.getElementById(id);
     const data=idx===0?S.docs.slice(0,5):S.docs;
-    if(!data.length){ 
-      el.innerHTML=`<div class="empty-state"><div class="empty-icon">🔒</div><p>${idx===0?'No documents yet. Upload your first PDF.':'Your encrypted documents will appear here.'}</p></div>`; 
-      return; 
+    if(!data.length){
+      el.innerHTML=`<div class="empty-state"><div class="empty-icon">🔒</div><p>${idx===0?'No documents yet. Upload your first PDF.':'Your encrypted documents will appear here.'}</p></div>`;
+      return;
     }
     el.innerHTML=data.map((doc,i)=>`
       <div class="doc-row" style="animation-delay:${i*.04}s">
@@ -971,23 +854,18 @@ function renderDocs(){
   stats();
 }
 
-/* ─────────────────────────────────────────────────────────────
-   LOAD DOCS FROM GCP
-───────────────────────────────────────────────────────────── */
+/* ─── LOAD DOCS FROM GCP ─── */
 async function loadDocs(){
   try{
-    console.log('[FoxVault] Fetching documents...');
     const data = await apiReq('GET', '/documents');
-    console.log('[FoxVault] Documents response:', data);
-    
     const list = Array.isArray(data) ? data : (data.documents || []);
     S.docs = list.map(d => {
       const raw = parseFloat(d.size) || 0;
       const mb  = raw > 1000 ? parseFloat((raw/1048576).toFixed(2)) : parseFloat(raw.toFixed(2));
-      return { 
-        id: String(d.id||d.doc_id||'unknown-' + Math.random().toString(36).substr(2,9)), 
-        name: d.name||d.original_name||d.fileName||d.file_name||'document.pdf', 
-        size: mb 
+      return {
+        id:   String(d.id||d.doc_id||'unknown-' + Math.random().toString(36).substr(2,9)),
+        name: d.name||d.original_name||d.fileName||d.file_name||'document.pdf',
+        size: mb
       };
     });
     S.storage = parseFloat(S.docs.reduce((acc,d)=>acc+d.size,0).toFixed(2));
@@ -995,20 +873,17 @@ async function loadDocs(){
     addAudit('sy','SYNC — '+S.docs.length+' document(s) loaded from Cloud Storage');
   }catch(e){
     console.error('[FoxVault] loadDocs failed:', e);
+    // On error, show empty state — never show stale data
+    S.docs = [];
+    S.storage = 0;
+    renderDocs();
     addAudit('dl','SYNC ERROR — '+e.message);
     toast('❌','Failed to load documents', e.message);
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   UPLOAD
-───────────────────────────────────────────────────────────── */
-function uid(){ 
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{ 
-    const r=Math.random()*16|0; 
-    return(c==='x'?r:(r&3|8)).toString(16); 
-  }); 
-}
+/* ─── UPLOAD ─── */
+function uid(){ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{ const r=Math.random()*16|0; return(c==='x'?r:(r&3|8)).toString(16); }); }
 
 function setupDZ(dzId,fiId){
   const dz=document.getElementById(dzId), fi=document.getElementById(fiId);
@@ -1016,57 +891,30 @@ function setupDZ(dzId,fiId){
   dz.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' ') fi.click(); });
   dz.addEventListener('dragover',e=>{ e.preventDefault(); dz.classList.add('drag'); });
   dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
-  dz.addEventListener('drop',e=>{ 
-    e.preventDefault(); 
-    dz.classList.remove('drag'); 
-    if(e.dataTransfer.files.length) go(e.dataTransfer.files[0]); 
-  });
-  fi.addEventListener('change',e=>{ 
-    if(e.target.files.length) go(e.target.files[0]); 
-    e.target.value=''; 
-  });
+  dz.addEventListener('drop',e=>{ e.preventDefault(); dz.classList.remove('drag'); if(e.dataTransfer.files.length) go(e.dataTransfer.files[0]); });
+  fi.addEventListener('change',e=>{ if(e.target.files.length) go(e.target.files[0]); e.target.value=''; });
 }
 
 async function go(file){
-  if(!file.name.toLowerCase().endsWith('.pdf')){
-    toast('❌','Invalid File','Only PDF files accepted');
-    addAudit('dl','REJECTED — '+esc(file.name)+' · not a PDF');
-    return;
-  }
-  if(!CFG.gatewayUrl){
-    toast('❌','Config Error','Gateway URL not loaded — check Vercel env vars');
-    return;
-  }
-
+  if(!file.name.toLowerCase().endsWith('.pdf')){ toast('❌','Invalid File','Only PDF files accepted'); addAudit('dl','REJECTED — '+esc(file.name)+' · not a PDF'); return; }
+  if(!CFG.gatewayUrl){ toast('❌','Config Error','Gateway URL not loaded — check Vercel env vars'); return; }
   const sizeMB = parseFloat((file.size/1048576).toFixed(2));
   const bar=document.getElementById('progBar'), fill=document.getElementById('progFill'), pct=document.getElementById('progPct');
   document.getElementById('progFile').textContent=file.name;
   bar.classList.add('show'); fill.style.width='0%'; pct.textContent='0%';
   addAudit('up','UPLOAD STARTED — '+esc(file.name)+' · '+sizeMB+' MB');
-
   let p=0, stopped=false;
-  const ticker=setInterval(()=>{
-    if(stopped) return;
-    p = Math.min(p + Math.random()*7+2, 80);
-    fill.style.width=p+'%'; pct.textContent=Math.floor(p)+'%';
-  },200);
-
+  const ticker=setInterval(()=>{ if(stopped) return; p = Math.min(p + Math.random()*7+2, 80); fill.style.width=p+'%'; pct.textContent=Math.floor(p)+'%'; },200);
   try{
     const safeName = encodeURIComponent(file.name);
     const data = await apiReq('POST', '/documents?filename=' + safeName, file);
-
     const doc = {
       id:   String(data.id   || data.object_name || data.name || uid()),
       name: String(data.name || data.fileName     || file.name),
-      size: (() => {
-        const raw = parseFloat(data.size) || file.size;
-        return raw > 1000 ? parseFloat((raw/1048576).toFixed(2)) : parseFloat(raw.toFixed(2));
-      })()
+      size: (() => { const raw = parseFloat(data.size) || file.size; return raw > 1000 ? parseFloat((raw/1048576).toFixed(2)) : parseFloat(raw.toFixed(2)); })()
     };
-
     stopped=true; clearInterval(ticker);
     fill.style.width='100%'; pct.textContent='100%';
-
     setTimeout(()=>{
       bar.classList.remove('show');
       S.docs.unshift(doc);
@@ -1075,28 +923,20 @@ async function go(file){
       addAudit('up','UPLOAD COMPLETE — '+esc(doc.name)+' · encrypted · CMEK');
       toast('✅','Document Encrypted', doc.name+' is now in the vault');
     }, 400);
-
   }catch(err){
     stopped=true; clearInterval(ticker);
-    bar.classList.remove('show');
-    fill.style.width='0%'; pct.textContent='0%';
-    console.error('[FoxVault] Upload error:', err);
+    bar.classList.remove('show'); fill.style.width='0%'; pct.textContent='0%';
     addAudit('dl','UPLOAD FAILED — '+esc(file.name)+' · '+err.message);
     toast('❌','Upload Failed', err.message);
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   MFA ENROLLMENT (Security page)
-───────────────────────────────────────────────────────────── */
+/* ─── MFA ENROLLMENT ─── */
 let enrollVerifier = null;
 let enrollVerificationId = null;
 
 async function refreshMfaStatus(){
-  if(!firebaseAuth || !firebaseAuth.currentUser){
-    document.getElementById('mfa-status').textContent = 'Not authenticated';
-    return;
-  }
+  if(!firebaseAuth || !firebaseAuth.currentUser){ document.getElementById('mfa-status').textContent = 'Not authenticated'; return; }
   await firebaseAuth.currentUser.reload();
   const factors = firebaseAuth.currentUser.multiFactor.enrolledFactors;
   if(factors.length > 0){
@@ -1115,30 +955,21 @@ async function refreshMfaStatus(){
 document.getElementById('mfa-enroll-btn').addEventListener('click', async () => {
   const phone = document.getElementById('mfa-phone').value.trim();
   if(!phone){ toast('❌','Error','Enter phone number'); return; }
-  
   const user = firebaseAuth.currentUser;
   if(!user){ toast('❌','Error','Please sign in again'); return; }
-  
   try {
     const multiFactorSession = await user.multiFactor.getSession();
     const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
     enrollVerifier = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha', {size:'normal'});
-    enrollVerificationId = await phoneAuthProvider.verifyPhoneNumber({
-      phoneNumber: phone,
-      session: multiFactorSession
-    }, enrollVerifier);
-    
+    enrollVerificationId = await phoneAuthProvider.verifyPhoneNumber({ phoneNumber: phone, session: multiFactorSession }, enrollVerifier);
     document.getElementById('mfa-verify-enroll-section').style.display = 'block';
     toast('📱','Code sent','Check your phone for the verification code');
-  } catch(e) {
-    toast('❌','Enrollment failed', authErr(e.code) || e.message);
-  }
+  } catch(e) { toast('❌','Enrollment failed', authErr(e.code) || e.message); }
 });
 
 document.getElementById('mfa-confirm-btn').addEventListener('click', async () => {
   const code = document.getElementById('mfa-enroll-code').value.trim();
   if(!code) return;
-  
   const user = firebaseAuth.currentUser;
   try {
     const cred = firebase.auth.PhoneAuthProvider.credential(enrollVerificationId, code);
@@ -1146,9 +977,7 @@ document.getElementById('mfa-confirm-btn').addEventListener('click', async () =>
     await user.multiFactor.enroll(assertion, 'Primary phone');
     toast('✅','MFA Enabled','Your account is now protected with 2FA');
     refreshMfaStatus();
-  } catch(e) {
-    toast('❌','Verification failed', authErr(e.code) || e.message);
-  }
+  } catch(e) { toast('❌','Verification failed', authErr(e.code) || e.message); }
 });
 
 document.getElementById('mfa-disable-btn').addEventListener('click', async () => {
@@ -1156,19 +985,13 @@ document.getElementById('mfa-disable-btn').addEventListener('click', async () =>
   if(!user) return;
   try {
     const factors = user.multiFactor.enrolledFactors;
-    for(const factor of factors){
-      await user.multiFactor.unenroll(factor);
-    }
+    for(const factor of factors) await user.multiFactor.unenroll(factor);
     toast('✅','MFA Disabled','Two-factor authentication has been turned off');
     refreshMfaStatus();
-  } catch(e) {
-    toast('❌','Error', authErr(e.code) || e.message);
-  }
+  } catch(e) { toast('❌','Error', authErr(e.code) || e.message); }
 });
 
-/* ─────────────────────────────────────────────────────────────
-   AUDIT
-───────────────────────────────────────────────────────────── */
+/* ─── AUDIT ─── */
 function addAudit(type,msg){
   S.events++;
   const s=document.getElementById('auditStream');
@@ -1185,36 +1008,35 @@ document.getElementById('clearAuditBtn').addEventListener('click',()=>{
   document.getElementById('auditStream').innerHTML='<div class="audit-entry"><div class="a-dot sy"></div><div><div class="a-event"><strong>LOG CLEARED</strong></div><div class="a-meta">Events persist in Cloud Audit Logs and BigQuery</div></div></div>';
 });
 
-/* ─────────────────────────────────────────────────────────────
-   TOAST
-───────────────────────────────────────────────────────────── */
+/* ─── TOAST ─── */
 function toast(icon,title,sub){
   const a=document.getElementById('toastArea'), el=document.createElement('div'); el.className='toast';
   el.innerHTML=`<div class="t-icon">${icon}</div><div><div class="t-title">${esc(title)}</div><div class="t-sub">${esc(sub)}</div></div>`;
-  a.appendChild(el); 
+  a.appendChild(el);
   setTimeout(()=>{ el.classList.add('out'); setTimeout(()=>el.remove(),220); },3500);
 }
 
-/* ─────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════
    INIT
-───────────────────────────────────────────────────────────── */
+
+   SECURITY FIX: On page load with an existing session token,
+   we do NOT call renderDocs() first. We immediately call
+   clearAppState() to ensure a blank slate, then showDash()
+   which fetches fresh data for the authenticated user.
+═══════════════════════════════════════════════════════════ */
 (async function(){
-  if(Session.token()){
-    document.getElementById('screen-login').classList.add('hidden');
-    document.getElementById('screen-dash').classList.add('visible');
-    document.getElementById('userEmail').textContent = Session.email();
-    renderDocs();
-  }
-  
+  // Always start with a clean DOM — no stale data from any previous session
+  clearAppState();
+
   await loadConfig();
   await initFirebase();
   setupDZ('dz1','fi1');
   setupDZ('dz2','fi2');
-  
+
   if(Session.token()){
-    addAudit('au','SESSION RESTORED — loading vault…');
-    await loadDocs();
-    refreshMfaStatus();
+    // SECURITY: showDash() will clear state then fetch fresh data
+    // We never renderDocs() before showDash() completes
+    await showDash(Session.email());
   } else {
     showLogin();
   }
