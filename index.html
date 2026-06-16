@@ -209,12 +209,9 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 .enc-badge{font-family:var(--fm);font-size:10px;color:var(--emerald);background:var(--em-d);
   border:1px solid rgba(16,185,129,.2);border-radius:20px;padding:3px 10px;display:inline-flex;align-items:center;gap:4px;}
 .doc-size{font-family:var(--fm);font-size:13px;color:var(--t3);text-align:right;}
-
-/* ── SECURITY FIX: loading skeleton ── */
 .docs-loading{text-align:center;padding:32px 20px;color:var(--t3);}
 .docs-loading-icon{font-size:22px;margin-bottom:10px;animation:spin 1.2s linear infinite;display:inline-block;}
 .docs-loading p{font-size:14px;font-family:var(--fm);}
-
 .empty-state{text-align:center;padding:52px 20px;color:var(--t3);}
 .empty-icon{font-size:40px;margin-bottom:14px;opacity:.3;}
 .empty-state p{font-size:15px;}
@@ -262,7 +259,7 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 .t-sub{font-size:13px;color:var(--t3);margin-top:1px;}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--ink-2);
   border-top:1px solid var(--bd);z-index:30;padding:6px 0 calc(6px + env(safe-area-inset-bottom));}
-.bnav-inner{display:flex;justify-content:space-around;align-items:center);}
+.bnav-inner{display:flex;justify-content:space-around;align-items:center;}
 .bnav-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 10px;
   border-radius:var(--r);cursor:pointer;color:var(--t3);background:none;border:none;
   font-family:var(--fb);min-width:56px;transition:color .15s;}
@@ -514,32 +511,109 @@ async function loadConfig(){
 }
 
 /* ─── FIREBASE ─── */
-let firebaseApp = null;
+let firebaseApp  = null;
 let firebaseAuth = null;
-let mfaResolver = null;
+let mfaResolver  = null;
 let mfaVerificationId = null;
+
+// ─── SECURITY FIX 1: Guard flag prevents onAuthStateChanged
+//     routing before initFirebase() has finished setting up.
+//     Without this, the observer fires immediately on init
+//     with whatever stale session Firebase finds in memory,
+//     before we've had a chance to set NONE persistence.
+let _authReady = false;
 
 async function initFirebase(){
   if(!CFG.identityApiKey || !CFG.firebaseProject) return;
   try {
-    firebaseApp = firebase.initializeApp({
-      apiKey: CFG.identityApiKey,
+    firebaseApp  = firebase.initializeApp({
+      apiKey:     CFG.identityApiKey,
       authDomain: CFG.firebaseAuthDomain,
-      projectId: CFG.firebaseProject
+      projectId:  CFG.firebaseProject
     });
     firebaseAuth = firebase.auth();
-    await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
-    console.log('[FoxVault] Firebase initialized');
+
+    // ─── SECURITY FIX 2: NONE persistence
+    //
+    //     SESSION persistence was the root cause of cross-user leakage.
+    //     Firebase with SESSION persistence keeps the authenticated user
+    //     alive in the tab's memory across signIn/signOut cycles. When
+    //     User B logs in on the same tab that User A used, Firebase still
+    //     holds User A's identity briefly during the handoff, causing
+    //     onAuthStateChanged to fire with stale identity.
+    //
+    //     NONE means Firebase holds NO auth state between calls. Every
+    //     sign-in is fresh. signOut fully destroys the session. There is
+    //     no residual identity for a second user to inherit.
+    await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE);
+
+    // ─── SECURITY FIX 3: onAuthStateChanged as the single source of truth
+    //
+    //     Previously, showDash() was called directly from signIn() using
+    //     the credential returned by signInWithEmailAndPassword(). This
+    //     bypassed Firebase's internal auth state machine and created a
+    //     race: the credential's token was used while Firebase hadn't yet
+    //     fully updated its internal state, so a subsequent getIdToken()
+    //     could briefly return the previous user's token.
+    //
+    //     onAuthStateChanged is the only reliable hook. Firebase guarantees
+    //     it fires AFTER internal state is fully committed. We do all
+    //     routing here and nowhere else.
+    firebaseAuth.onAuthStateChanged(async (user) => {
+      if (!_authReady) return; // ignore the initial speculative fire
+
+      // Always wipe previous user's data from memory and DOM first.
+      // This runs for EVERY auth state change — login, logout, token
+      // refresh, session expiry. No stale data can survive.
+      clearAppState();
+      Session.clear();
+
+      if (user) {
+        try {
+          // force:true refreshes the token from the server, ensuring
+          // we never use a cached token that belonged to a prior user.
+          const token = await user.getIdToken(/* force */ true);
+          Session.set(token, user.email);
+          await showDash(user.email);
+        } catch(e) {
+          console.error('[FoxVault] Token refresh failed on auth change:', e);
+          showLogin();
+        }
+      } else {
+        showLogin();
+      }
+    });
+
+    _authReady = true; // observer is now live and trusted
+    console.log('[FoxVault] Firebase initialized with NONE persistence');
   } catch(e) { console.error('[FoxVault] Firebase init failed:', e); }
 }
 
-/* ─── SESSION — sessionStorage only ─── */
-const Session = {
-  set(t,e){ sessionStorage.setItem('fv_t',t); sessionStorage.setItem('fv_e',e); },
-  token(){ return sessionStorage.getItem('fv_t'); },
-  email(){ return sessionStorage.getItem('fv_e')||''; },
-  clear(){ sessionStorage.removeItem('fv_t'); sessionStorage.removeItem('fv_e'); }
-};
+/* ─── SESSION — IN-MEMORY ONLY ─────────────────────────────────────────────
+   SECURITY FIX 4: Token never written to sessionStorage or localStorage.
+   
+   Previously: sessionStorage.setItem('fv_t', token)
+   
+   The problem: sessionStorage survives across Firebase auth state changes
+   within the same tab. After User A logs out and User B logs in, there is
+   a window where Session.token() still returns User A's token — before
+   Session.set() is called for User B. apiReq() uses Session.token()
+   directly, so any API call in that window is made with the wrong identity.
+   
+   The fix: token lives only in a JS closure. It is set atomically inside
+   onAuthStateChanged AFTER clearAppState() runs, so there is no window
+   where a stale token can be read. The closure dies with the page.
+─────────────────────────────────────────────────────────────────────────── */
+const Session = (() => {
+  let _token = null;
+  let _email = null;
+  return {
+    set(t, e) { _token = t; _email = e; },
+    token()   { return _token; },
+    email()   { return _email || ''; },
+    clear()   { _token = null; _email = null; }
+  };
+})();
 
 /* ─── RATE LIMITER ─── */
 const RL = {
@@ -557,8 +631,10 @@ function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 async function apiReq(method, path, body){
   if(!CFG.gatewayUrl) throw new Error('Gateway URL not configured - check Vercel environment variables');
   const baseUrl = CFG.gatewayUrl.replace(/\/$/, '');
-  const url = baseUrl + (path.startsWith('/') ? path : '/' + path);
-  const opts = { method, headers: { 'Authorization': 'Bearer ' + Session.token() }, mode: 'cors', credentials: 'omit' };
+  const url     = baseUrl + (path.startsWith('/') ? path : '/' + path);
+  const token   = Session.token();
+  if(!token) throw new Error('No active session — please sign in again.');
+  const opts = { method, headers: { 'Authorization': 'Bearer ' + token }, mode: 'cors', credentials: 'omit' };
   if(body instanceof File || body instanceof Blob){ opts.headers['Content-Type'] = 'application/pdf'; opts.body = body; }
   else if(body instanceof FormData){ opts.body = body; delete opts.headers['Content-Type']; }
   else if(body){ opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
@@ -609,25 +685,30 @@ document.getElementById('tab-signin').addEventListener('click',()=>switchTab('si
 document.getElementById('tab-signup').addEventListener('click',()=>switchTab('signup'));
 function switchTab(t){ hideAlerts(); ['signin','signup'].forEach(k=>{ document.getElementById('tab-'+k).classList.toggle('active',k===t); document.getElementById('pane-'+k).classList.toggle('active',k===t); }); }
 
-/* ─── SIGN IN ─── */
-document.getElementById('si-btn').addEventListener('click',signIn);
-document.getElementById('si-pass').addEventListener('keydown',e=>{ if(e.key==='Enter') signIn(); });
+/* ─── SIGN IN ─────────────────────────────────────────────────────────────
+   NOTE: signIn() no longer calls showDash() directly.
+   It only calls signInWithEmailAndPassword(). Firebase then fires
+   onAuthStateChanged, which handles ALL routing. This removes the
+   race condition where showDash() could be called with a stale token.
+─────────────────────────────────────────────────────────────────────────── */
+document.getElementById('si-btn').addEventListener('click', signIn);
+document.getElementById('si-pass').addEventListener('keydown', e => { if(e.key==='Enter') signIn(); });
 
 async function signIn(){
   hideAlerts();
-  const em=document.getElementById('si-email').value.trim();
-  const pw=document.getElementById('si-pass').value;
+  const em = document.getElementById('si-email').value.trim();
+  const pw = document.getElementById('si-pass').value;
   if(!em){ showErr('si-err','Please enter your email.'); document.getElementById('si-email').classList.add('err'); return; }
   if(!pw){ showErr('si-err','Please enter your password.'); document.getElementById('si-pass').classList.add('err'); return; }
   if(!CFG.identityApiKey){ showErr('si-err','Auth service unavailable — config not loaded.'); return; }
-  const rl=RL.check();
+  const rl = RL.check();
   if(!rl.ok){ const w=document.getElementById('si-rate'); w.textContent=`Too many attempts. Try again in ${RL.minsLeft()} minute(s).`; w.classList.add('show'); return; }
-  setLoading('si',true);
-  try{
-    const cred = await firebaseAuth.signInWithEmailAndPassword(em, pw);
-    const token = await cred.user.getIdToken();
-    Session.set(token, cred.user.email);
-    await showDash(cred.user.email);
+  setLoading('si', true);
+  try {
+    // signInWithEmailAndPassword triggers onAuthStateChanged on success.
+    // We do NOT call Session.set() or showDash() here — the observer does it.
+    await firebaseAuth.signInWithEmailAndPassword(em, pw);
+    // setLoading is cleared by the auth state change routing or catch block
   } catch(e) {
     if(e.code === 'auth/multi-factor-auth-required'){
       mfaResolver = e.resolver;
@@ -636,34 +717,39 @@ async function signIn(){
       return;
     }
     RL.hit();
-    const left=RL.check().left;
-    showErr('si-err', authErr(e.code)+(left<=2?` (${left} attempt(s) left)`:'')); 
-  } finally { if(!mfaResolver) setLoading('si',false); }
+    const left = RL.check().left;
+    showErr('si-err', authErr(e.code) + (left <= 2 ? ` (${left} attempt(s) left)` : ''));
+    setLoading('si', false);
+  }
 }
 
 /* ─── SIGN UP ─── */
-document.getElementById('su-btn').addEventListener('click',signUp);
-document.getElementById('su-pass2').addEventListener('keydown',e=>{ if(e.key==='Enter') signUp(); });
+document.getElementById('su-btn').addEventListener('click', signUp);
+document.getElementById('su-pass2').addEventListener('keydown', e => { if(e.key==='Enter') signUp(); });
 
 async function signUp(){
   hideAlerts();
-  const em=document.getElementById('su-email').value.trim();
-  const pw=document.getElementById('su-pass').value;
-  const pw2=document.getElementById('su-pass2').value;
+  const em  = document.getElementById('su-email').value.trim();
+  const pw  = document.getElementById('su-pass').value;
+  const pw2 = document.getElementById('su-pass2').value;
   if(!em){ showErr('su-err','Please enter your email.'); document.getElementById('su-email').classList.add('err'); return; }
   if(!pw||pw.length<8){ showErr('su-err','Password must be at least 8 characters.'); document.getElementById('su-pass').classList.add('err'); return; }
   if(pw!==pw2){ showErr('su-err','Passwords do not match.'); document.getElementById('su-pass2').classList.add('err'); return; }
   if(!CFG.identityApiKey){ showErr('su-err','Auth service unavailable — config not loaded.'); return; }
-  setLoading('su',true);
-  try{
+  setLoading('su', true);
+  try {
     await firebaseAuth.createUserWithEmailAndPassword(em, pw);
-    const ok=document.getElementById('su-ok'); ok.textContent='Account created! Please sign in.'; ok.classList.add('show');
-    document.getElementById('su-email').value='';
-    document.getElementById('su-pass').value='';
-    document.getElementById('su-pass2').value='';
+    // createUserWithEmailAndPassword also fires onAuthStateChanged and would
+    // log the new user in automatically. We explicitly sign them out so they
+    // go through the normal sign-in flow (better UX + forces re-auth).
+    await firebaseAuth.signOut();
+    const ok = document.getElementById('su-ok'); ok.textContent='Account created! Please sign in.'; ok.classList.add('show');
+    document.getElementById('su-email').value = '';
+    document.getElementById('su-pass').value  = '';
+    document.getElementById('su-pass2').value = '';
     setTimeout(()=>{ hideAlerts(); switchTab('signin'); document.getElementById('si-email').value=em; }, 1500);
-  }catch(e){ showErr('su-err', authErr(e.code) || e.message); }
-  finally{ setLoading('su',false); }
+  } catch(e) { showErr('su-err', authErr(e.code) || e.message); }
+  finally { setLoading('su', false); }
 }
 
 /* ─── FORGOT PASSWORD ─── */
@@ -693,7 +779,7 @@ async function startMfaSignIn(){
   document.getElementById('mfa-code').value = '';
   document.getElementById('mfa-err').classList.remove('show');
   try {
-    const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
+    const phoneAuthProvider   = new firebase.auth.PhoneAuthProvider();
     const applicationVerifier = new firebase.auth.RecaptchaVerifier('mfa-recaptcha', { size: 'invisible' });
     mfaVerificationId = await phoneAuthProvider.verifyPhoneNumber({ multiFactorHint: mfaResolver.hints[0], session: mfaResolver.session }, applicationVerifier);
   } catch(e) { showErr('mfa-err', 'Failed to send code: ' + (e.message || e.code)); }
@@ -705,12 +791,10 @@ document.getElementById('mfa-verify').addEventListener('click', async () => {
   try {
     const phoneCred = firebase.auth.PhoneAuthProvider.credential(mfaVerificationId, code);
     const assertion = firebase.auth.PhoneMultiFactorGenerator.assertion(phoneCred);
-    const cred = await mfaResolver.resolveSignIn(assertion);
-    const token = await cred.user.getIdToken();
-    Session.set(token, cred.user.email);
+    // resolveSignIn triggers onAuthStateChanged — no manual showDash() needed
+    await mfaResolver.resolveSignIn(assertion);
     document.getElementById('mfaModal').classList.remove('show');
     mfaResolver = null;
-    await showDash(cred.user.email);
   } catch(e) { showErr('mfa-err', e.message || 'Invalid code. Please try again.'); }
 });
 
@@ -718,96 +802,65 @@ document.getElementById('mfa-verify').addEventListener('click', async () => {
 function showLogin(){
   document.getElementById('screen-login').classList.remove('hidden');
   document.getElementById('screen-dash').classList.remove('visible');
+  // Clear login form fields on every return to login screen
+  ['si-email','si-pass','su-email','su-pass','su-pass2'].forEach(id => {
+    const el = document.getElementById(id); if(el) el.value = '';
+  });
+  hideAlerts();
+  switchTab('signin');
+  setLoading('si', false);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SECURITY FIX — clearAppState()
-   
-   Called BEFORE showing the dashboard for ANY user login and
-   BEFORE logout completes. Wipes all document data from both
-   memory AND the DOM so no cross-user leakage is possible.
-═══════════════════════════════════════════════════════════ */
+/* ─── clearAppState ─────────────────────────────────────────────────────
+   Wipes ALL user-specific data from memory and DOM.
+   Called by onAuthStateChanged before EVERY auth transition.
+   No user data survives a state change.
+─────────────────────────────────────────────────────────────────────────── */
 function clearAppState(){
-  // 1. Zero out the in-memory store
-  S.docs   = [];
-  S.events = 0;
+  S.docs    = [];
+  S.events  = 0;
   S.storage = 0;
 
-  // 2. Immediately wipe the DOM — replace doc lists with loading skeletons
   const loadingHTML = `<div class="docs-loading"><div class="docs-loading-icon">⏳</div><p>Loading your documents…</p></div>`;
-  const emptyRecent = document.getElementById('recentList');
-  const emptyAll    = document.getElementById('allList');
-  if(emptyRecent) emptyRecent.innerHTML = loadingHTML;
-  if(emptyAll)    emptyAll.innerHTML    = loadingHTML;
+  const rl = document.getElementById('recentList');
+  const al = document.getElementById('allList');
+  if(rl) rl.innerHTML = loadingHTML;
+  if(al) al.innerHTML = loadingHTML;
 
-  // 3. Reset stats counters to zero on screen
   stats();
 
-  // 4. Reset audit log
   const auditStream = document.getElementById('auditStream');
   if(auditStream){
     auditStream.innerHTML = '<div class="audit-entry"><div class="a-dot sy"></div><div><div class="a-event"><strong>SESSION STARTED</strong> — Audit log reset for new session</div><div class="a-meta">Cloud Audit Logs remain in BigQuery</div></div></div>';
   }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SECURITY FIX — showDash()
-
-   Order of operations:
-   1. clearAppState()  ← wipes stale data BEFORE the screen shows
-   2. Show dashboard   ← user sees empty/loading state, never old data
-   3. Set user label
-   4. loadDocs()       ← fetch ONLY this user's documents
-═══════════════════════════════════════════════════════════ */
+/* ─── showDash ─── */
 async function showDash(email){
-  // STEP 1: wipe any previous user's data from memory and DOM first
-  clearAppState();
-
-  // STEP 2: now safe to show the dashboard — lists are empty/loading
   document.getElementById('screen-login').classList.add('hidden');
   document.getElementById('screen-dash').classList.add('visible');
   document.getElementById('userEmail').textContent = email || Session.email();
-
   addAudit('au', 'LOGIN — authenticated as ' + esc(email || Session.email()));
-
-  // STEP 3: fetch THIS user's documents from the API
   await loadDocs();
   refreshMfaStatus();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SECURITY FIX — logoutBtn
-   
-   Order of operations:
-   1. clearAppState()  ← wipe data from DOM immediately on click
-   2. Session.clear()  ← kill the token
-   3. Firebase signOut ← invalidate server-side session
-   4. showLogin()      ← return to login screen
-═══════════════════════════════════════════════════════════ */
+/* ─── LOGOUT ───────────────────────────────────────────────────────────────
+   firebaseAuth.signOut() triggers onAuthStateChanged(null), which calls
+   clearAppState() + Session.clear() + showLogin() automatically.
+   We do NOT need to call those here — the observer handles it.
+   We call signOut() and let the chain complete.
+─────────────────────────────────────────────────────────────────────────── */
 document.getElementById('logoutBtn').addEventListener('click', async () => {
-  // STEP 1 & 2: clear data and token before async signOut
+  // Immediately clear the DOM so the user sees a blank state during sign-out
   clearAppState();
   Session.clear();
-
-  // STEP 3: sign out from Firebase (async, non-blocking for UX)
   try { if(firebaseAuth) await firebaseAuth.signOut(); } catch(e){ console.warn('[FoxVault] Firebase signOut error:', e); }
-
-  // Clear login form fields
-  ['si-email','si-pass','su-email','su-pass','su-pass2'].forEach(id => {
-    const el = document.getElementById(id);
-    if(el) el.value = '';
-  });
-
-  hideAlerts();
-  switchTab('signin');
-
-  // STEP 4: return to login
-  showLogin();
+  // onAuthStateChanged(null) fires here and calls showLogin()
 });
 
 /* ─── DASHBOARD STATE ─── */
-// SECURITY: initialise as empty — never pre-populate with data
-const S = { docs:[], events:0, storage:0 };
+const S  = { docs:[], events:0, storage:0 };
 const PT = { dashboard:'DASHBOARD',documents:'DOCUMENTS',upload:'UPLOAD',audit:'AUDIT LOG',infra:'INFRASTRUCTURE',security:'SECURITY' };
 const PC = { dashboard:'Overview',documents:'Documents',upload:'Upload New',audit:'Audit Log',infra:'Tech Stack',security:'Multi-Factor Auth' };
 
@@ -816,8 +869,8 @@ function navTo(page){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('pg-'+page).classList.add('active');
   document.querySelectorAll('.nav-item[data-page],.bnav-btn[data-page]').forEach(n=>n.classList.toggle('active',n.dataset.page===page));
-  document.getElementById('pageTitle').textContent=PT[page]||page.toUpperCase();
-  document.getElementById('breadcrumb').textContent=PC[page]||page;
+  document.getElementById('pageTitle').textContent = PT[page]||page.toUpperCase();
+  document.getElementById('breadcrumb').textContent = PC[page]||page;
   if(page === 'security') refreshMfaStatus();
 }
 document.querySelectorAll('[data-page]').forEach(el=>{
@@ -827,23 +880,23 @@ document.querySelectorAll('[data-page]').forEach(el=>{
 
 /* ─── STATS ─── */
 function stats(){
-  document.getElementById('s-total').textContent=S.docs.length;
-  document.getElementById('s-enc').textContent=S.docs.length;
-  document.getElementById('s-events').textContent=S.events;
-  document.getElementById('s-mb').textContent=S.storage.toFixed(1);
-  document.getElementById('navBadge').textContent=S.docs.length;
+  document.getElementById('s-total').textContent  = S.docs.length;
+  document.getElementById('s-enc').textContent    = S.docs.length;
+  document.getElementById('s-events').textContent = S.events;
+  document.getElementById('s-mb').textContent     = S.storage.toFixed(1);
+  document.getElementById('navBadge').textContent = S.docs.length;
 }
 
 /* ─── RENDER DOCS — XSS-safe via esc() ─── */
 function renderDocs(){
   ['recentList','allList'].forEach((id,idx)=>{
-    const el=document.getElementById(id);
-    const data=idx===0?S.docs.slice(0,5):S.docs;
+    const el   = document.getElementById(id);
+    const data = idx===0 ? S.docs.slice(0,5) : S.docs;
     if(!data.length){
-      el.innerHTML=`<div class="empty-state"><div class="empty-icon">🔒</div><p>${idx===0?'No documents yet. Upload your first PDF.':'Your encrypted documents will appear here.'}</p></div>`;
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔒</div><p>${idx===0?'No documents yet. Upload your first PDF.':'Your encrypted documents will appear here.'}</p></div>`;
       return;
     }
-    el.innerHTML=data.map((doc,i)=>`
+    el.innerHTML = data.map((doc,i)=>`
       <div class="doc-row" style="animation-delay:${i*.04}s">
         <div class="doc-ficon">📄</div>
         <div style="overflow:hidden"><div class="doc-name" title="${esc(doc.name)}">${esc(doc.name)}</div><div class="doc-id">${esc(doc.id.substring(0,26))}…</div></div>
@@ -863,7 +916,7 @@ async function loadDocs(){
       const raw = parseFloat(d.size) || 0;
       const mb  = raw > 1000 ? parseFloat((raw/1048576).toFixed(2)) : parseFloat(raw.toFixed(2));
       return {
-        id:   String(d.id||d.doc_id||'unknown-' + Math.random().toString(36).substr(2,9)),
+        id:   String(d.id||d.doc_id||'unknown-'+Math.random().toString(36).substr(2,9)),
         name: d.name||d.original_name||d.fileName||d.file_name||'document.pdf',
         size: mb
       };
@@ -873,8 +926,7 @@ async function loadDocs(){
     addAudit('sy','SYNC — '+S.docs.length+' document(s) loaded from Cloud Storage');
   }catch(e){
     console.error('[FoxVault] loadDocs failed:', e);
-    // On error, show empty state — never show stale data
-    S.docs = [];
+    S.docs    = [];
     S.storage = 0;
     renderDocs();
     addAudit('dl','SYNC ERROR — '+e.message);
@@ -883,8 +935,6 @@ async function loadDocs(){
 }
 
 /* ─── UPLOAD ─── */
-function uid(){ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{ const r=Math.random()*16|0; return(c==='x'?r:(r&3|8)).toString(16); }); }
-
 function setupDZ(dzId,fiId){
   const dz=document.getElementById(dzId), fi=document.getElementById(fiId);
   dz.addEventListener('click',()=>fi.click());
@@ -900,25 +950,25 @@ async function go(file){
   if(!CFG.gatewayUrl){ toast('❌','Config Error','Gateway URL not loaded — check Vercel env vars'); return; }
   const sizeMB = parseFloat((file.size/1048576).toFixed(2));
   const bar=document.getElementById('progBar'), fill=document.getElementById('progFill'), pct=document.getElementById('progPct');
-  document.getElementById('progFile').textContent=file.name;
+  document.getElementById('progFile').textContent = file.name;
   bar.classList.add('show'); fill.style.width='0%'; pct.textContent='0%';
   addAudit('up','UPLOAD STARTED — '+esc(file.name)+' · '+sizeMB+' MB');
   let p=0, stopped=false;
-  const ticker=setInterval(()=>{ if(stopped) return; p = Math.min(p + Math.random()*7+2, 80); fill.style.width=p+'%'; pct.textContent=Math.floor(p)+'%'; },200);
+  const ticker=setInterval(()=>{ if(stopped) return; p=Math.min(p+Math.random()*7+2,80); fill.style.width=p+'%'; pct.textContent=Math.floor(p)+'%'; },200);
   try{
     const safeName = encodeURIComponent(file.name);
-    const data = await apiReq('POST', '/documents?filename=' + safeName, file);
-    const doc = {
-      id:   String(data.id   || data.object_name || data.name || uid()),
-      name: String(data.name || data.fileName     || file.name),
-      size: (() => { const raw = parseFloat(data.size) || file.size; return raw > 1000 ? parseFloat((raw/1048576).toFixed(2)) : parseFloat(raw.toFixed(2)); })()
+    const data = await apiReq('POST', '/documents?filename='+safeName, file);
+    const doc  = {
+      id:   String(data.id||data.object_name||data.name||'u-'+Date.now()),
+      name: String(data.name||data.fileName||file.name),
+      size: (()=>{ const raw=parseFloat(data.size)||file.size; return raw>1000?parseFloat((raw/1048576).toFixed(2)):parseFloat(raw.toFixed(2)); })()
     };
     stopped=true; clearInterval(ticker);
     fill.style.width='100%'; pct.textContent='100%';
     setTimeout(()=>{
       bar.classList.remove('show');
       S.docs.unshift(doc);
-      S.storage = parseFloat((S.storage + doc.size).toFixed(2));
+      S.storage = parseFloat((S.storage+doc.size).toFixed(2));
       renderDocs();
       addAudit('up','UPLOAD COMPLETE — '+esc(doc.name)+' · encrypted · CMEK');
       toast('✅','Document Encrypted', doc.name+' is now in the vault');
@@ -932,23 +982,23 @@ async function go(file){
 }
 
 /* ─── MFA ENROLLMENT ─── */
-let enrollVerifier = null;
+let enrollVerifier      = null;
 let enrollVerificationId = null;
 
 async function refreshMfaStatus(){
-  if(!firebaseAuth || !firebaseAuth.currentUser){ document.getElementById('mfa-status').textContent = 'Not authenticated'; return; }
+  if(!firebaseAuth || !firebaseAuth.currentUser){ document.getElementById('mfa-status').textContent='Not authenticated'; return; }
   await firebaseAuth.currentUser.reload();
   const factors = firebaseAuth.currentUser.multiFactor.enrolledFactors;
   if(factors.length > 0){
-    document.getElementById('mfa-status').innerHTML = '<span style="color:var(--emerald)">✓ MFA is enabled</span> · ' + esc(factors[0].displayName || factors[0].phoneNumber);
-    document.getElementById('mfa-enroll-section').style.display = 'none';
+    document.getElementById('mfa-status').innerHTML = '<span style="color:var(--emerald)">✓ MFA is enabled</span> · '+esc(factors[0].displayName||factors[0].phoneNumber);
+    document.getElementById('mfa-enroll-section').style.display        = 'none';
     document.getElementById('mfa-verify-enroll-section').style.display = 'none';
-    document.getElementById('mfa-disable-section').style.display = 'block';
+    document.getElementById('mfa-disable-section').style.display       = 'block';
   } else {
-    document.getElementById('mfa-status').textContent = 'MFA is not enabled';
-    document.getElementById('mfa-enroll-section').style.display = 'block';
+    document.getElementById('mfa-status').textContent                  = 'MFA is not enabled';
+    document.getElementById('mfa-enroll-section').style.display        = 'block';
     document.getElementById('mfa-verify-enroll-section').style.display = 'none';
-    document.getElementById('mfa-disable-section').style.display = 'none';
+    document.getElementById('mfa-disable-section').style.display       = 'none';
   }
 }
 
@@ -959,12 +1009,12 @@ document.getElementById('mfa-enroll-btn').addEventListener('click', async () => 
   if(!user){ toast('❌','Error','Please sign in again'); return; }
   try {
     const multiFactorSession = await user.multiFactor.getSession();
-    const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
-    enrollVerifier = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha', {size:'normal'});
-    enrollVerificationId = await phoneAuthProvider.verifyPhoneNumber({ phoneNumber: phone, session: multiFactorSession }, enrollVerifier);
-    document.getElementById('mfa-verify-enroll-section').style.display = 'block';
+    const phoneAuthProvider  = new firebase.auth.PhoneAuthProvider();
+    enrollVerifier           = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha',{size:'normal'});
+    enrollVerificationId     = await phoneAuthProvider.verifyPhoneNumber({phoneNumber:phone,session:multiFactorSession},enrollVerifier);
+    document.getElementById('mfa-verify-enroll-section').style.display='block';
     toast('📱','Code sent','Check your phone for the verification code');
-  } catch(e) { toast('❌','Enrollment failed', authErr(e.code) || e.message); }
+  } catch(e){ toast('❌','Enrollment failed', authErr(e.code)||e.message); }
 });
 
 document.getElementById('mfa-confirm-btn').addEventListener('click', async () => {
@@ -972,12 +1022,12 @@ document.getElementById('mfa-confirm-btn').addEventListener('click', async () =>
   if(!code) return;
   const user = firebaseAuth.currentUser;
   try {
-    const cred = firebase.auth.PhoneAuthProvider.credential(enrollVerificationId, code);
+    const cred      = firebase.auth.PhoneAuthProvider.credential(enrollVerificationId, code);
     const assertion = firebase.auth.PhoneMultiFactorGenerator.assertion(cred);
     await user.multiFactor.enroll(assertion, 'Primary phone');
     toast('✅','MFA Enabled','Your account is now protected with 2FA');
     refreshMfaStatus();
-  } catch(e) { toast('❌','Verification failed', authErr(e.code) || e.message); }
+  } catch(e){ toast('❌','Verification failed', authErr(e.code)||e.message); }
 });
 
 document.getElementById('mfa-disable-btn').addEventListener('click', async () => {
@@ -988,19 +1038,19 @@ document.getElementById('mfa-disable-btn').addEventListener('click', async () =>
     for(const factor of factors) await user.multiFactor.unenroll(factor);
     toast('✅','MFA Disabled','Two-factor authentication has been turned off');
     refreshMfaStatus();
-  } catch(e) { toast('❌','Error', authErr(e.code) || e.message); }
+  } catch(e){ toast('❌','Error', authErr(e.code)||e.message); }
 });
 
 /* ─── AUDIT ─── */
 function addAudit(type,msg){
   S.events++;
-  const s=document.getElementById('auditStream');
-  const time=new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  const cls=({up:'up',dn:'dn',dl:'dl',au:'au',sy:'sy'})[type]||'sy';
-  const e=document.createElement('div'); e.className='audit-entry';
-  e.innerHTML=`<div class="a-dot ${cls}"></div><div><div class="a-event">${msg}</div><div class="a-meta">${time} UTC · Cloud Audit Logs → BigQuery</div></div>`;
-  s.insertBefore(e,s.firstChild);
-  while(s.children.length>20) s.removeChild(s.lastChild);
+  const s    = document.getElementById('auditStream');
+  const time = new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const cls  = ({up:'up',dn:'dn',dl:'dl',au:'au',sy:'sy'})[type]||'sy';
+  const e    = document.createElement('div'); e.className='audit-entry';
+  e.innerHTML = `<div class="a-dot ${cls}"></div><div><div class="a-event">${msg}</div><div class="a-meta">${time} UTC · Cloud Audit Logs → BigQuery</div></div>`;
+  s.insertBefore(e, s.firstChild);
+  while(s.children.length > 20) s.removeChild(s.lastChild);
   stats();
 }
 
@@ -1016,30 +1066,32 @@ function toast(icon,title,sub){
   setTimeout(()=>{ el.classList.add('out'); setTimeout(()=>el.remove(),220); },3500);
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    INIT
 
-   SECURITY FIX: On page load with an existing session token,
-   we do NOT call renderDocs() first. We immediately call
-   clearAppState() to ensure a blank slate, then showDash()
-   which fetches fresh data for the authenticated user.
-═══════════════════════════════════════════════════════════ */
+   Order of operations:
+   1. clearAppState()  — blank DOM, no stale data
+   2. showLogin()      — show login screen while Firebase warms up
+   3. loadConfig()     — fetch gateway URL + Firebase config from Vercel
+   4. initFirebase()   — init SDK, set NONE persistence, register
+                         onAuthStateChanged (the single routing authority)
+   5. setupDZ()        — wire up drag-and-drop upload zones
+
+   onAuthStateChanged fires with null on a fresh page load (NONE persistence
+   means no restored session) and routes to showLogin() — which is already
+   showing, so no visible flash. On login, signInWithEmailAndPassword()
+   triggers it with the new user and routes to showDash().
+═══════════════════════════════════════════════════════════════════════════ */
 (async function(){
-  // Always start with a clean DOM — no stale data from any previous session
   clearAppState();
+  showLogin();
 
   await loadConfig();
   await initFirebase();
+
   setupDZ('dz1','fi1');
   setupDZ('dz2','fi2');
-
-  if(Session.token()){
-    // SECURITY: showDash() will clear state then fetch fresh data
-    // We never renderDocs() before showDash() completes
-    await showDash(Session.email());
-  } else {
-    showLogin();
-  }
+  // No manual Session.token() check — onAuthStateChanged is the authority.
 })();
 </script>
 </body>
