@@ -21,10 +21,17 @@ export default function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
 
+  // SECURITY FIX: Prevent CDN/browser caching of config endpoint.
+  // Without this, a CDN or shared browser cache could serve User A's
+  // config response to User B, leaking environment-level configuration.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+
   res.status(200).json({
-    gatewayUrl:      process.env.GATEWAY_URL       || '',
-    identityApiKey:  process.env.IDENTITY_API_KEY  || '',
-    firebaseProject: process.env.FIREBASE_PROJECT_ID || 'vault-project-492518',
-    firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || `${process.env.FIREBASE_PROJECT_ID || 'vault-project-492518'}.firebaseapp.com`
+    gatewayUrl:         process.env.GATEWAY_URL            || '',
+    identityApiKey:     process.env.IDENTITY_API_KEY       || '',
+    firebaseProject:    process.env.FIREBASE_PROJECT_ID    || 'vault-project-492518',
+    firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN   ||
+      `${process.env.FIREBASE_PROJECT_ID || 'vault-project-492518'}.firebaseapp.com`
   });
 }
