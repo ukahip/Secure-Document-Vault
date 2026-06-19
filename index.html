@@ -388,6 +388,7 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
           <div class="stack-name" style="margin-bottom:12px;">Phone Number (SMS)</div>
           <div class="stack-role" style="margin-bottom:18px;">Add an extra layer of security by requiring a verification code from your phone when signing in.</div>
           <div id="mfa-status" style="margin-bottom:18px;font-family:var(--fm);font-size:13px;color:var(--t3);">Checking status…</div>
+          <div class="alert-box alert-err" id="mfa-enroll-err" role="alert" style="margin-bottom:14px;"></div>
           <div id="mfa-enroll-section" style="display:none;">
             <div class="field" style="margin-bottom:14px;">
               <label class="field-label">Phone Number</label>
@@ -397,7 +398,7 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
               </div>
             </div>
             <div id="mfa-enroll-recaptcha" class="recaptcha-container"></div>
-            <button class="submit-btn" id="mfa-enroll-btn" type="button" style="max-width:200px;">Enable MFA</button>
+            <button class="submit-btn" id="mfa-enroll-btn" type="button" style="max-width:200px;"><div class="spinner" id="mfa-enroll-spin"></div><span id="mfa-enroll-label">Enable MFA</span></button>
           </div>
           <div id="mfa-verify-enroll-section" style="display:none;margin-top:16px;">
             <div class="field" style="margin-bottom:14px;">
@@ -407,7 +408,7 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
                 <input class="field-input" type="text" id="mfa-enroll-code" maxlength="6" placeholder="000000" inputmode="numeric"/>
               </div>
             </div>
-            <button class="submit-btn" id="mfa-confirm-btn" type="button" style="max-width:200px;">Confirm</button>
+            <button class="submit-btn" id="mfa-confirm-btn" type="button" style="max-width:200px;"><div class="spinner" id="mfa-confirm-spin"></div><span id="mfa-confirm-label">Confirm</span></button>
           </div>
           <div id="mfa-disable-section" style="display:none;">
             <button class="logout-btn" id="mfa-disable-btn" type="button" style="color:var(--rose);background:var(--rose-d);border-radius:10px;padding:12px 16px;">Disable MFA</button>
@@ -981,11 +982,47 @@ async function go(file){
   }
 }
 
-/* ─── MFA ENROLLMENT ─── */
-let enrollVerifier      = null;
+/* ─── MFA ENROLLMENT ───────────────────────────────────────────────────────
+   IMPORTANT: MFA enrollment talks ONLY to Firebase/Identity Platform
+   (identitytoolkit.googleapis.com, securetoken.googleapis.com). It never
+   touches upload-document, list-document, download-document, Cloud
+   Storage, or Cloud KMS. A failure here cannot affect document upload/
+   list functionality — they are fully independent Firebase subsystems.
+─────────────────────────────────────────────────────────────────────────── */
+let enrollVerifier       = null;
 let enrollVerificationId = null;
 
+function mfaEnrollErr(msg){
+  const e = document.getElementById('mfa-enroll-err');
+  e.textContent = msg;
+  e.classList.add('show');
+}
+function clearMfaEnrollErr(){
+  const e = document.getElementById('mfa-enroll-err');
+  e.classList.remove('show');
+  e.textContent = '';
+}
+function setMfaLoading(prefix, on, label){
+  const btn = document.getElementById(prefix+'-btn');
+  const spin = document.getElementById(prefix+'-spin');
+  const lbl = document.getElementById(prefix+'-label');
+  if(btn) btn.disabled = on;
+  if(spin) spin.classList.toggle('show', on);
+  if(lbl) lbl.textContent = on ? 'Please wait…' : label;
+}
+
+// If verifyPhoneNumber() throws, the rendered reCAPTCHA widget is left in a
+// broken/used state. Clearing it lets the user retry cleanly instead of the
+// button silently doing nothing on a second click.
+function resetEnrollRecaptcha(){
+  try { if(enrollVerifier) enrollVerifier.clear(); } catch(_) {}
+  enrollVerifier = null;
+  const el = document.getElementById('mfa-enroll-recaptcha');
+  if(el) el.innerHTML = '';
+}
+
 async function refreshMfaStatus(){
+  clearMfaEnrollErr();
   if(!firebaseAuth || !firebaseAuth.currentUser){ document.getElementById('mfa-status').textContent='Not authenticated'; return; }
   await firebaseAuth.currentUser.reload();
   const factors = firebaseAuth.currentUser.multiFactor.enrolledFactors;
@@ -999,46 +1036,92 @@ async function refreshMfaStatus(){
     document.getElementById('mfa-enroll-section').style.display        = 'block';
     document.getElementById('mfa-verify-enroll-section').style.display = 'none';
     document.getElementById('mfa-disable-section').style.display       = 'none';
+    document.getElementById('mfa-phone').value = '';
+    document.getElementById('mfa-enroll-code').value = '';
+    resetEnrollRecaptcha();
   }
 }
 
+// Translates common phone-auth failure codes into actionable messages —
+// in particular, unauthorized-domain errors (which look generic by default)
+// are the most likely cause if SMS never arrives despite a correct number.
+function mfaEnrollErrMessage(e){
+  const code = e && e.code;
+  if(code === 'auth/unauthorized-domain'){
+    return 'This domain is not authorized for phone authentication. Add it under Identity Platform → Settings → Security → Authorized domains, then retry.';
+  }
+  if(code === 'auth/invalid-phone-number'){
+    return 'Enter the phone number in international format, e.g. +1 234 567 8900.';
+  }
+  if(code === 'auth/too-many-requests'){
+    return 'Too many attempts from this number or browser. Wait a few minutes and try again.';
+  }
+  if(code === 'auth/captcha-check-failed'){
+    return 'reCAPTCHA verification failed. Refresh the page and try again.';
+  }
+  return authErr(code) || (e && e.message) || 'Enrollment failed. Please try again.';
+}
+
 document.getElementById('mfa-enroll-btn').addEventListener('click', async () => {
+  clearMfaEnrollErr();
   const phone = document.getElementById('mfa-phone').value.trim();
-  if(!phone){ toast('❌','Error','Enter phone number'); return; }
+  if(!phone){ mfaEnrollErr('Enter a phone number, including the country code (e.g. +1 234 567 8900).'); return; }
   const user = firebaseAuth.currentUser;
-  if(!user){ toast('❌','Error','Please sign in again'); return; }
+  if(!user){ mfaEnrollErr('Please sign in again.'); return; }
+
+  setMfaLoading('mfa-enroll', true, 'Enable MFA');
   try {
     const multiFactorSession = await user.multiFactor.getSession();
     const phoneAuthProvider  = new firebase.auth.PhoneAuthProvider();
-    enrollVerifier           = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha',{size:'normal'});
-    enrollVerificationId     = await phoneAuthProvider.verifyPhoneNumber({phoneNumber:phone,session:multiFactorSession},enrollVerifier);
-    document.getElementById('mfa-verify-enroll-section').style.display='block';
+    resetEnrollRecaptcha();
+    enrollVerifier           = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha', { size: 'normal' });
+    enrollVerificationId     = await phoneAuthProvider.verifyPhoneNumber({ phoneNumber: phone, session: multiFactorSession }, enrollVerifier);
+    document.getElementById('mfa-verify-enroll-section').style.display = 'block';
     toast('📱','Code sent','Check your phone for the verification code');
-  } catch(e){ toast('❌','Enrollment failed', authErr(e.code)||e.message); }
+  } catch(e) {
+    console.error('[FoxVault] MFA enrollment failed:', e);
+    mfaEnrollErr(mfaEnrollErrMessage(e));
+    resetEnrollRecaptcha();
+  } finally {
+    setMfaLoading('mfa-enroll', false, 'Enable MFA');
+  }
 });
 
 document.getElementById('mfa-confirm-btn').addEventListener('click', async () => {
+  clearMfaEnrollErr();
   const code = document.getElementById('mfa-enroll-code').value.trim();
-  if(!code) return;
+  if(!code || code.length !== 6){ mfaEnrollErr('Enter the 6-digit code sent to your phone.'); return; }
   const user = firebaseAuth.currentUser;
+  if(!user){ mfaEnrollErr('Please sign in again.'); return; }
+
+  setMfaLoading('mfa-confirm', true, 'Confirm');
   try {
     const cred      = firebase.auth.PhoneAuthProvider.credential(enrollVerificationId, code);
     const assertion = firebase.auth.PhoneMultiFactorGenerator.assertion(cred);
     await user.multiFactor.enroll(assertion, 'Primary phone');
     toast('✅','MFA Enabled','Your account is now protected with 2FA');
-    refreshMfaStatus();
-  } catch(e){ toast('❌','Verification failed', authErr(e.code)||e.message); }
+    await refreshMfaStatus();
+  } catch(e) {
+    console.error('[FoxVault] MFA confirmation failed:', e);
+    mfaEnrollErr(authErr(e.code) || e.message || 'Incorrect or expired code. Please try again.');
+  } finally {
+    setMfaLoading('mfa-confirm', false, 'Confirm');
+  }
 });
 
 document.getElementById('mfa-disable-btn').addEventListener('click', async () => {
+  clearMfaEnrollErr();
   const user = firebaseAuth.currentUser;
   if(!user) return;
   try {
     const factors = user.multiFactor.enrolledFactors;
     for(const factor of factors) await user.multiFactor.unenroll(factor);
     toast('✅','MFA Disabled','Two-factor authentication has been turned off');
-    refreshMfaStatus();
-  } catch(e){ toast('❌','Error', authErr(e.code)||e.message); }
+    await refreshMfaStatus();
+  } catch(e) {
+    console.error('[FoxVault] MFA disable failed:', e);
+    mfaEnrollErr(authErr(e.code) || e.message || 'Failed to disable MFA.');
+  }
 });
 
 /* ─── AUDIT ─── */
