@@ -278,7 +278,6 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
 @media(max-width:760px){#screen-login{grid-template-columns:1fr;}.login-left{display:none;}.login-right{padding:40px 20px;}.auth-box{max-width:100%;}.auth-inner{padding:28px 22px;}.sidebar{display:none;}.content{padding:18px;padding-bottom:88px;}.topbar{padding:0 18px;height:54px;}.stats-row{grid-template-columns:1fr 1fr;gap:10px;}.stat-card{padding:14px 15px;}.stat-value{font-size:28px;}.stack-grid{grid-template-columns:1fr 1fr;gap:10px;}.bottom-nav{display:block;}.docs-head,.doc-row{grid-template-columns:34px 1fr 80px;}}
 @media(max-width:420px){.stats-row{grid-template-columns:1fr 1fr;}.stack-grid{grid-template-columns:1fr;}}
 </style>
-<base target="_blank">
 </head>
 <body>
 <div class="bg-grid"></div>
@@ -388,10 +387,11 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
         <div class="stack-card" style="max-width:600px;">
           <div class="stack-name" style="margin-bottom:12px;">Phone Number (SMS)</div>
           <div class="stack-role" style="margin-bottom:18px;">Add an extra layer of security by requiring a verification code from your phone when signing in.</div>
-          <div id="mfa-info" style="margin-bottom:18px;font-size:13px;color:var(--t3);line-height:1.6;">
-            <strong style="color:var(--t2);">Important:</strong> MFA must be enrolled for each user individually. After you add your phone number here, you will be required to enter a verification code on every future sign-in.
-          </div>
           <div id="mfa-status" style="margin-bottom:18px;font-family:var(--fm);font-size:13px;color:var(--t3);">Checking status…</div>
+          <div id="mfa-verify-email-section" style="display:none;margin-bottom:18px;">
+            <div class="stack-role" style="margin-bottom:12px;">Your email address hasn't been verified yet. Identity Platform requires a verified email before phone-based MFA can be configured.</div>
+            <button class="submit-btn" id="mfa-resend-btn" type="button" style="max-width:240px;"><div class="spinner" id="mfa-resend-spin"></div><span id="mfa-resend-label">Resend verification email</span></button>
+          </div>
           <div class="alert-box alert-err" id="mfa-enroll-err" role="alert" style="margin-bottom:14px;"></div>
           <div id="mfa-enroll-section" style="display:none;">
             <div class="field" style="margin-bottom:14px;">
@@ -520,7 +520,6 @@ let firebaseApp  = null;
 let firebaseAuth = null;
 let mfaResolver  = null;
 let mfaVerificationId = null;
-let signInRecaptchaVerifier = null;
 
 // ─── SECURITY FIX 1: Guard flag prevents onAuthStateChanged
 //     routing before initFirebase() has finished setting up.
@@ -744,12 +743,18 @@ async function signUp(){
   if(!CFG.identityApiKey){ showErr('su-err','Auth service unavailable — config not loaded.'); return; }
   setLoading('su', true);
   try {
-    await firebaseAuth.createUserWithEmailAndPassword(em, pw);
+    const cred = await firebaseAuth.createUserWithEmailAndPassword(em, pw);
+    // SECURITY FIX: send the verification email immediately after account
+    // creation. Identity Platform refuses to let a user configure MFA
+    // until emailVerified === true, so skipping this permanently locks
+    // every new signup out of MFA enrollment.
+    try { await cred.user.sendEmailVerification(); }
+    catch(verifyErr) { console.warn('[FoxVault] sendEmailVerification failed:', verifyErr); }
     // createUserWithEmailAndPassword also fires onAuthStateChanged and would
     // log the new user in automatically. We explicitly sign them out so they
     // go through the normal sign-in flow (better UX + forces re-auth).
     await firebaseAuth.signOut();
-    const ok = document.getElementById('su-ok'); ok.textContent='Account created! Please sign in.'; ok.classList.add('show');
+    const ok = document.getElementById('su-ok'); ok.textContent='Account created! Check your inbox to verify your email, then sign in.'; ok.classList.add('show');
     document.getElementById('su-email').value = '';
     document.getElementById('su-pass').value  = '';
     document.getElementById('su-pass2').value = '';
@@ -780,75 +785,17 @@ document.getElementById('fp-submit').addEventListener('click', async () => {
 });
 
 /* ─── MFA SIGN-IN MODAL ─── */
-function mfaSignInErrMessage(e){
-  const code = e && e.code;
-  if(code === 'auth/unauthorized-domain'){
-    return 'This domain is not authorized for phone authentication. Add it in Identity Platform → Settings → Security → Authorized domains.';
-  }
-  if(code === 'auth/invalid-recaptcha-token' || code === 'auth/captcha-check-failed'){
-    return 'reCAPTCHA verification failed. Please refresh the page and try again.';
-  }
-  if(code === 'auth/too-many-requests'){
-    return 'Too many attempts. Please wait a few minutes and try again.';
-  }
-  if(code === 'auth/invalid-phone-number'){
-    return 'The phone number on file is invalid. Please disable MFA and re-enroll with a valid number.';
-  }
-  return 'Failed to send verification code: ' + (e.message || e.code || 'Unknown error');
-}
-
 async function startMfaSignIn(){
   document.getElementById('mfaModal').classList.add('show');
   document.getElementById('mfa-code').value = '';
   document.getElementById('mfa-err').classList.remove('show');
-
-  // Clean up any stale verifier from a previous attempt
-  if(signInRecaptchaVerifier){
-    try { signInRecaptchaVerifier.clear(); } catch(_) {}
-    signInRecaptchaVerifier = null;
-  }
-
-  if(!mfaResolver || !mfaResolver.hints || !mfaResolver.hints.length){
-    showErr('mfa-err', 'MFA is required but no verification methods are available. Please contact support.');
-    return;
-  }
-
-  // Allow the modal to become visible in the DOM before rendering reCAPTCHA
-  await new Promise(r => setTimeout(r, 100));
-
   try {
-    const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
-    signInRecaptchaVerifier = new firebase.auth.RecaptchaVerifier('mfa-recaptcha', {
-      size: 'invisible',
-      callback: (response) => { console.log('[FoxVault] Sign-in reCAPTCHA solved:', response); },
-      'expired-callback': () => { console.warn('[FoxVault] Sign-in reCAPTCHA expired'); }
-    });
-    await signInRecaptchaVerifier.render();
-    mfaVerificationId = await phoneAuthProvider.verifyPhoneNumber({
-      multiFactorHint: mfaResolver.hints[0],
-      session: mfaResolver.session
-    }, signInRecaptchaVerifier);
-    console.log('[FoxVault] MFA verification code sent');
-  } catch(e) {
-    console.error('[FoxVault] MFA sign-in start failed:', e);
-    showErr('mfa-err', mfaSignInErrMessage(e));
-    if(signInRecaptchaVerifier){
-      try { signInRecaptchaVerifier.clear(); } catch(_) {}
-      signInRecaptchaVerifier = null;
-    }
-  }
+    const phoneAuthProvider   = new firebase.auth.PhoneAuthProvider();
+    const applicationVerifier = new firebase.auth.RecaptchaVerifier('mfa-recaptcha', { size: 'invisible' });
+    mfaVerificationId = await phoneAuthProvider.verifyPhoneNumber({ multiFactorHint: mfaResolver.hints[0], session: mfaResolver.session }, applicationVerifier);
+  } catch(e) { showErr('mfa-err', 'Failed to send code: ' + (e.message || e.code)); }
 }
-
-document.getElementById('mfa-cancel').addEventListener('click', () => {
-  document.getElementById('mfaModal').classList.remove('show');
-  if(signInRecaptchaVerifier){
-    try { signInRecaptchaVerifier.clear(); } catch(_) {}
-    signInRecaptchaVerifier = null;
-  }
-  mfaResolver = null;
-  setLoading('si', false);
-});
-
+document.getElementById('mfa-cancel').addEventListener('click', () => { document.getElementById('mfaModal').classList.remove('show'); mfaResolver = null; setLoading('si', false); });
 document.getElementById('mfa-verify').addEventListener('click', async () => {
   const code = document.getElementById('mfa-code').value.trim();
   if(!code || code.length !== 6){ showErr('mfa-err','Enter the 6-digit code.'); return; }
@@ -858,14 +805,8 @@ document.getElementById('mfa-verify').addEventListener('click', async () => {
     // resolveSignIn triggers onAuthStateChanged — no manual showDash() needed
     await mfaResolver.resolveSignIn(assertion);
     document.getElementById('mfaModal').classList.remove('show');
-    if(signInRecaptchaVerifier){
-      try { signInRecaptchaVerifier.clear(); } catch(_) {}
-      signInRecaptchaVerifier = null;
-    }
     mfaResolver = null;
-  } catch(e) {
-    showErr('mfa-err', e.message || 'Invalid code. Please try again.');
-  }
+  } catch(e) { showErr('mfa-err', e.message || 'Invalid code. Please try again.'); }
 });
 
 /* ─── SCREEN TRANSITIONS ─── */
@@ -1094,7 +1035,22 @@ async function refreshMfaStatus(){
   clearMfaEnrollErr();
   if(!firebaseAuth || !firebaseAuth.currentUser){ document.getElementById('mfa-status').textContent='Not authenticated'; return; }
   await firebaseAuth.currentUser.reload();
-  const factors = firebaseAuth.currentUser.multiFactor.enrolledFactors;
+  const user = firebaseAuth.currentUser;
+
+  // MFA enrollment is impossible server-side until the email is verified —
+  // surface that clearly instead of letting the user hit a raw error after
+  // filling in a phone number and waiting on a reCAPTCHA + SMS code.
+  if(!user.emailVerified){
+    document.getElementById('mfa-status').innerHTML        = '<span style="color:var(--amber)">⚠ Email not verified</span>';
+    document.getElementById('mfa-verify-email-section').style.display = 'block';
+    document.getElementById('mfa-enroll-section').style.display        = 'none';
+    document.getElementById('mfa-verify-enroll-section').style.display = 'none';
+    document.getElementById('mfa-disable-section').style.display       = 'none';
+    return;
+  }
+  document.getElementById('mfa-verify-email-section').style.display = 'none';
+
+  const factors = user.multiFactor.enrolledFactors;
   if(factors.length > 0){
     document.getElementById('mfa-status').innerHTML = '<span style="color:var(--emerald)">✓ MFA is enabled</span> · '+esc(factors[0].displayName||factors[0].phoneNumber);
     document.getElementById('mfa-enroll-section').style.display        = 'none';
@@ -1128,6 +1084,9 @@ function mfaEnrollErrMessage(e){
   if(code === 'auth/captcha-check-failed'){
     return 'reCAPTCHA verification failed. Refresh the page and try again.';
   }
+  if(code === 'auth/unverified-email'){
+    return 'Your email isn\'t verified yet. Use the "Resend verification email" button above, then try again.';
+  }
   return authErr(code) || (e && e.message) || 'Enrollment failed. Please try again.';
 }
 
@@ -1143,12 +1102,7 @@ document.getElementById('mfa-enroll-btn').addEventListener('click', async () => 
     const multiFactorSession = await user.multiFactor.getSession();
     const phoneAuthProvider  = new firebase.auth.PhoneAuthProvider();
     resetEnrollRecaptcha();
-    enrollVerifier           = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha', {
-      size: 'normal',
-      callback: (response) => { console.log('[FoxVault] Enroll reCAPTCHA solved:', response); },
-      'expired-callback': () => { console.warn('[FoxVault] Enroll reCAPTCHA expired'); }
-    });
-    await enrollVerifier.render();
+    enrollVerifier           = new firebase.auth.RecaptchaVerifier('mfa-enroll-recaptcha', { size: 'normal' });
     enrollVerificationId     = await phoneAuthProvider.verifyPhoneNumber({ phoneNumber: phone, session: multiFactorSession }, enrollVerifier);
     document.getElementById('mfa-verify-enroll-section').style.display = 'block';
     toast('📱','Code sent','Check your phone for the verification code');
@@ -1198,6 +1152,26 @@ document.getElementById('mfa-disable-btn').addEventListener('click', async () =>
   }
 });
 
+document.getElementById('mfa-resend-btn').addEventListener('click', async () => {
+  clearMfaEnrollErr();
+  const user = firebaseAuth.currentUser;
+  if(!user){ mfaEnrollErr('Please sign in again.'); return; }
+  setMfaLoading('mfa-resend', true, 'Resend verification email');
+  try {
+    await user.sendEmailVerification();
+    toast('📧','Verification email sent','Check your inbox, then come back and refresh this page');
+  } catch(e) {
+    console.error('[FoxVault] Resend verification failed:', e);
+    if(e.code === 'auth/too-many-requests'){
+      mfaEnrollErr('Too many verification emails sent. Wait a few minutes and try again.');
+    } else {
+      mfaEnrollErr(authErr(e.code) || e.message || 'Could not send verification email.');
+    }
+  } finally {
+    setMfaLoading('mfa-resend', false, 'Resend verification email');
+  }
+});
+
 /* ─── AUDIT ─── */
 function addAudit(type,msg){
   S.events++;
@@ -1205,7 +1179,7 @@ function addAudit(type,msg){
   const time = new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
   const cls  = ({up:'up',dn:'dn',dl:'dl',au:'au',sy:'sy'})[type]||'sy';
   const e    = document.createElement('div'); e.className='audit-entry';
-  e.innerHTML = `<div class="a-dot ${cls}"></div><div><div class="a-event">${msg}</div><div class="a-meta">${time} UTC · Cloud Audit Logs → BigQuery</div></div></div>`;
+  e.innerHTML = `<div class="a-dot ${cls}"></div><div><div class="a-event">${msg}</div><div class="a-meta">${time} UTC · Cloud Audit Logs → BigQuery</div></div>`;
   s.insertBefore(e, s.firstChild);
   while(s.children.length > 20) s.removeChild(s.lastChild);
   stats();
