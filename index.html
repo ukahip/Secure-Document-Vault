@@ -388,10 +388,6 @@ html,body{height:100%;font-family:var(--fb);background:var(--ink);color:var(--t1
           <div class="stack-name" style="margin-bottom:12px;">Phone Number (SMS)</div>
           <div class="stack-role" style="margin-bottom:18px;">Add an extra layer of security by requiring a verification code from your phone when signing in.</div>
           <div id="mfa-status" style="margin-bottom:18px;font-family:var(--fm);font-size:13px;color:var(--t3);">Checking status…</div>
-          <div id="mfa-verify-email-section" style="display:none;margin-bottom:18px;">
-            <div class="stack-role" style="margin-bottom:12px;">Your email address hasn't been verified yet. Identity Platform requires a verified email before phone-based MFA can be configured.</div>
-            <button class="submit-btn" id="mfa-resend-btn" type="button" style="max-width:240px;"><div class="spinner" id="mfa-resend-spin"></div><span id="mfa-resend-label">Resend verification email</span></button>
-          </div>
           <div class="alert-box alert-err" id="mfa-enroll-err" role="alert" style="margin-bottom:14px;"></div>
           <div id="mfa-enroll-section" style="display:none;">
             <div class="field" style="margin-bottom:14px;">
@@ -743,18 +739,12 @@ async function signUp(){
   if(!CFG.identityApiKey){ showErr('su-err','Auth service unavailable — config not loaded.'); return; }
   setLoading('su', true);
   try {
-    const cred = await firebaseAuth.createUserWithEmailAndPassword(em, pw);
-    // SECURITY FIX: send the verification email immediately after account
-    // creation. Identity Platform refuses to let a user configure MFA
-    // until emailVerified === true, so skipping this permanently locks
-    // every new signup out of MFA enrollment.
-    try { await cred.user.sendEmailVerification(); }
-    catch(verifyErr) { console.warn('[FoxVault] sendEmailVerification failed:', verifyErr); }
+    await firebaseAuth.createUserWithEmailAndPassword(em, pw);
     // createUserWithEmailAndPassword also fires onAuthStateChanged and would
     // log the new user in automatically. We explicitly sign them out so they
     // go through the normal sign-in flow (better UX + forces re-auth).
     await firebaseAuth.signOut();
-    const ok = document.getElementById('su-ok'); ok.textContent='Account created! Check your inbox to verify your email, then sign in.'; ok.classList.add('show');
+    const ok = document.getElementById('su-ok'); ok.textContent='Account created! Please sign in.'; ok.classList.add('show');
     document.getElementById('su-email').value = '';
     document.getElementById('su-pass').value  = '';
     document.getElementById('su-pass2').value = '';
@@ -1035,22 +1025,7 @@ async function refreshMfaStatus(){
   clearMfaEnrollErr();
   if(!firebaseAuth || !firebaseAuth.currentUser){ document.getElementById('mfa-status').textContent='Not authenticated'; return; }
   await firebaseAuth.currentUser.reload();
-  const user = firebaseAuth.currentUser;
-
-  // MFA enrollment is impossible server-side until the email is verified —
-  // surface that clearly instead of letting the user hit a raw error after
-  // filling in a phone number and waiting on a reCAPTCHA + SMS code.
-  if(!user.emailVerified){
-    document.getElementById('mfa-status').innerHTML        = '<span style="color:var(--amber)">⚠ Email not verified</span>';
-    document.getElementById('mfa-verify-email-section').style.display = 'block';
-    document.getElementById('mfa-enroll-section').style.display        = 'none';
-    document.getElementById('mfa-verify-enroll-section').style.display = 'none';
-    document.getElementById('mfa-disable-section').style.display       = 'none';
-    return;
-  }
-  document.getElementById('mfa-verify-email-section').style.display = 'none';
-
-  const factors = user.multiFactor.enrolledFactors;
+  const factors = firebaseAuth.currentUser.multiFactor.enrolledFactors;
   if(factors.length > 0){
     document.getElementById('mfa-status').innerHTML = '<span style="color:var(--emerald)">✓ MFA is enabled</span> · '+esc(factors[0].displayName||factors[0].phoneNumber);
     document.getElementById('mfa-enroll-section').style.display        = 'none';
@@ -1083,9 +1058,6 @@ function mfaEnrollErrMessage(e){
   }
   if(code === 'auth/captcha-check-failed'){
     return 'reCAPTCHA verification failed. Refresh the page and try again.';
-  }
-  if(code === 'auth/unverified-email'){
-    return 'Your email isn\'t verified yet. Use the "Resend verification email" button above, then try again.';
   }
   return authErr(code) || (e && e.message) || 'Enrollment failed. Please try again.';
 }
@@ -1149,26 +1121,6 @@ document.getElementById('mfa-disable-btn').addEventListener('click', async () =>
   } catch(e) {
     console.error('[FoxVault] MFA disable failed:', e);
     mfaEnrollErr(authErr(e.code) || e.message || 'Failed to disable MFA.');
-  }
-});
-
-document.getElementById('mfa-resend-btn').addEventListener('click', async () => {
-  clearMfaEnrollErr();
-  const user = firebaseAuth.currentUser;
-  if(!user){ mfaEnrollErr('Please sign in again.'); return; }
-  setMfaLoading('mfa-resend', true, 'Resend verification email');
-  try {
-    await user.sendEmailVerification();
-    toast('📧','Verification email sent','Check your inbox, then come back and refresh this page');
-  } catch(e) {
-    console.error('[FoxVault] Resend verification failed:', e);
-    if(e.code === 'auth/too-many-requests'){
-      mfaEnrollErr('Too many verification emails sent. Wait a few minutes and try again.');
-    } else {
-      mfaEnrollErr(authErr(e.code) || e.message || 'Could not send verification email.');
-    }
-  } finally {
-    setMfaLoading('mfa-resend', false, 'Resend verification email');
   }
 });
 
